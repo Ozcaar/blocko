@@ -27,7 +27,7 @@ macro_rules! catalog {
 catalog! {
     DialogOpen => "Abrir carpeta del mundo de Minecraft", "Open Minecraft world folder";
     OpenWorld => "Abrir mundo…", "Open world…";
-    OpenOptions => "Opciones", "Options";
+    WorldMenu => "Mundo", "World";
     OpenReplace => "Reemplazar pestaña…", "Replace tab…";
     OpenWindow => "Abrir en otra ventana…", "Open in new window…";
     Language => "Idioma", "Language";
@@ -51,6 +51,7 @@ catalog! {
     ClipboardBlocks => "{0} bloques, incluido el aire", "{0} blocks, including air";
     ClipboardEntity => "{0} entidad de bloque", "{0} block entity";
     ClipboardEntities => "{0} entidades de bloque", "{0} block entities";
+    PreviewTool => "Previsualizar", "Preview";
     PreviewButton => "Previsualizar pegado", "Preview paste";
     LoadingTerrain => "Cargando terreno…", "Loading terrain…";
     EmptyTerrain => "No hay terreno generado cerca", "No generated terrain nearby";
@@ -60,10 +61,12 @@ catalog! {
     CopyingWorld => "Copiando desde {0}…", "Copying from {0}…";
     CopyDone => "Copia de {0} · {1} × {2} × {3}", "Copied from {0} · {1} × {2} × {3}";
     CopyFailed => "No se pudo copiar desde {0}.", "Could not copy from {0}.";
+    PickBothTool => "Marcar A/B", "Mark A/B";
     PickBoth => "Marcar A y B en el visor", "Mark A and B in the viewport";
     PickCorner => "Marca la esquina {0} en un bloque del visor.", "Mark corner {0} on a block in the viewport.";
     CancelMark => "Cancelar marca", "Cancel marking";
     PickMiss => "Acerca la cámara y elige un bloque visible.", "Move closer and choose a visible block.";
+    ClearTool => "Limpiar", "Clear";
     ClearSelection => "Limpiar selección", "Clear selection";
     Dimensions => "{0} × {1} × {2} bloques", "{0} × {1} × {2} blocks";
     CopyButton => "Copiar volumen", "Copy volume";

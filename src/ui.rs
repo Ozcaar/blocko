@@ -433,60 +433,13 @@ fn window_ui(
     bindings: &Bindings,
 ) -> WindowActions {
     let mut actions = WindowActions::default();
-    let opening = workspace.pending.is_some();
-    let busy = opening || view.paste.writes();
+    let busy = workspace.pending.is_some() || view.paste.writes();
     let name = view.stream.as_ref().map(|stream| stream.name.clone());
-    egui::TopBottomPanel::top("toolbar")
-        .frame(frame(BAR))
-        .show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new("Blocko")
-                        .size(18.0)
-                        .strong()
-                        .color(ACCENT),
-                );
-                ui.separator();
-                if ui
-                    .add_enabled(!busy, accent_button(lang.text(Text::OpenWorld)))
-                    .clicked()
-                {
-                    actions.open = Some(Destination::Tab);
-                }
-                ui.add_enabled_ui(!busy, |ui| {
-                    ui.menu_button(lang.text(Text::OpenOptions), |ui| {
-                        if ui
-                            .add_enabled(
-                                name.is_some(),
-                                egui::Button::new(lang.text(Text::OpenReplace)),
-                            )
-                            .clicked()
-                        {
-                            actions.open = Some(Destination::Replace);
-                            ui.close();
-                        }
-                        if ui.button(lang.text(Text::OpenWindow)).clicked() {
-                            actions.open = Some(Destination::NewWindow);
-                            ui.close();
-                        }
-                    });
-                });
-                ui.menu_button(lang.text(Text::Language), |ui| {
-                    for language in Language::ALL {
-                        if ui
-                            .selectable_label(language == lang, language.name())
-                            .clicked()
-                        {
-                            actions.language = Some(language);
-                            ui.close();
-                        }
-                    }
-                });
-            });
-        });
+    menu_bar(ctx, busy, name.is_some(), lang, &mut actions);
     if !tabs.is_empty() {
         tab_bar(ctx, window, workspace, tabs, busy, lang, &mut actions);
     }
+    tool_bar(ctx, view, clipboard, busy, captured, lang, &mut actions);
     status_bar(
         ctx, workspace, view, position, captured, clipboard, lang, bindings,
     );
@@ -500,12 +453,6 @@ fn window_ui(
                     ui.heading(lang.text(Text::EmptyTitle));
                     ui.label(egui::RichText::new(lang.text(Text::EmptyHelp)).color(MUTED));
                     ui.add_space(8.0);
-                    if ui
-                        .add_enabled(!opening, egui::Button::new(lang.text(Text::OpenWorld)))
-                        .clicked()
-                    {
-                        actions.open = Some(Destination::Tab);
-                    }
                     opening_notice(ui, workspace, lang);
                 });
             });
@@ -527,7 +474,7 @@ fn window_ui(
                                     view,
                                     name,
                                     position,
-                                    opening,
+                                    busy,
                                     clipboard,
                                     lang,
                                     &mut actions,
@@ -550,6 +497,226 @@ fn window_ui(
             });
     }
     actions
+}
+
+fn menu_bar(
+    ctx: &egui::Context,
+    busy: bool,
+    world_open: bool,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    egui::TopBottomPanel::top("menu")
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(10, 4)))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Blocko")
+                        .size(17.0)
+                        .strong()
+                        .color(ACCENT),
+                );
+                ui.separator();
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.menu_button(lang.text(Text::WorldMenu), |ui| {
+                        let commands = [
+                            (true, Text::OpenWorld, Destination::Tab),
+                            (world_open, Text::OpenReplace, Destination::Replace),
+                            (true, Text::OpenWindow, Destination::NewWindow),
+                        ];
+                        for (enabled, text, destination) in commands {
+                            if ui
+                                .add_enabled(enabled, egui::Button::new(lang.text(text)))
+                                .clicked()
+                            {
+                                actions.open = Some(destination);
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+                ui.menu_button(lang.text(Text::Language), |ui| {
+                    for language in Language::ALL {
+                        if ui
+                            .selectable_label(language == lang, language.name())
+                            .clicked()
+                        {
+                            actions.language = Some(language);
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        });
+}
+
+fn tool_bar(
+    ctx: &egui::Context,
+    view: &mut View,
+    clipboard: &Clipboard,
+    busy: bool,
+    captured: bool,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    egui::TopBottomPanel::top("tools")
+        .exact_height(36.0)
+        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(9, 4)))
+        .show(ctx, |ui| {
+            horizontal_strip(ui, |ui| {
+                let open_label = lang.text(Text::OpenWorld);
+                let open_button = if view.stream.is_none() {
+                    accent_button(open_label)
+                } else {
+                    egui::Button::new(open_label)
+                };
+                if ui.add_enabled(!busy, open_button).clicked() {
+                    actions.open = Some(Destination::Tab);
+                }
+                if view.stream.is_none() {
+                    return;
+                }
+                ui.separator();
+                if view.paste.locks_preview() {
+                    ui.label(egui::RichText::new(lang.text(Text::Placement)).color(MUTED));
+                } else if let Some(preview) = &mut view.preview {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        tool_bar_placement(ui, preview, lang, actions);
+                    });
+                    view.air_mode = preview.mode;
+                } else {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        tool_bar_editing(ui, view, clipboard, captured, lang, actions);
+                    });
+                }
+            });
+        });
+}
+
+fn tool_bar_editing(
+    ui: &mut egui::Ui,
+    view: &mut View,
+    clipboard: &Clipboard,
+    captured: bool,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    ui.selectable_value(&mut view.selecting, false, lang.text(Text::Explore));
+    ui.selectable_value(&mut view.selecting, true, lang.text(Text::Select));
+    ui.separator();
+    if view.selecting {
+        if ui
+            .button(lang.text(Text::PickBothTool))
+            .on_hover_text(lang.text(Text::PickBoth))
+            .clicked()
+        {
+            arm_pick(&mut view.selection, 0, true);
+        }
+        if view.selection.picking.is_some() {
+            if ui.button(lang.text(Text::CancelMark)).clicked() {
+                stop_marking(&mut view.selection);
+            }
+        } else if ui
+            .add_enabled(
+                view.selection.corners.iter().any(Option::is_some),
+                egui::Button::new(lang.text(Text::ClearTool)),
+            )
+            .on_hover_text(lang.text(Text::ClearSelection))
+            .clicked()
+        {
+            view.selection = Selection::default();
+        }
+        if ui
+            .add_enabled(
+                action_enabled(Action::Copy, view, clipboard, captured),
+                egui::Button::new(lang.text(Text::ActionCopy)),
+            )
+            .on_hover_text(lang.text(Text::CopyButton))
+            .clicked()
+        {
+            actions.editor = Some((Action::Copy, None));
+        }
+        ui.separator();
+    } else {
+        stop_marking(&mut view.selection);
+    }
+    if ui
+        .add_enabled(
+            action_enabled(Action::StartPaste, view, clipboard, captured),
+            egui::Button::new(lang.text(Text::PreviewTool)),
+        )
+        .on_hover_text(lang.text(Text::PreviewButton))
+        .clicked()
+    {
+        actions.editor = Some((Action::StartPaste, None));
+    }
+}
+
+fn tool_bar_placement(
+    ui: &mut egui::Ui,
+    preview: &mut Placement,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    ui.selectable_value(
+        &mut preview.mode,
+        AirMode::Include,
+        lang.text(Text::IncludeAir),
+    )
+    .on_hover_text(lang.text(Text::IncludeAirHelp));
+    ui.selectable_value(
+        &mut preview.mode,
+        AirMode::Ignore,
+        lang.text(Text::IgnoreAir),
+    )
+    .on_hover_text(lang.text(Text::IgnoreAirHelp));
+    ui.separator();
+    if ui
+        .selectable_label(preview.moving, lang.text(Text::Follow))
+        .clicked()
+        && !preview.moving
+    {
+        preview.moving = true;
+        preview.target_valid = false;
+    }
+    if ui
+        .selectable_label(!preview.moving, lang.text(Text::Precise))
+        .clicked()
+        && preview.moving
+    {
+        preview.moving = false;
+        preview.target_valid = true;
+    }
+    ui.separator();
+    if ui
+        .add_enabled(
+            preview.target_valid,
+            egui::Button::new(lang.text(Text::PreparePaste)),
+        )
+        .clicked()
+    {
+        actions.paste = Some(PasteAction::Prepare);
+    }
+    if ui
+        .button(lang.text(Text::ActionCancel))
+        .on_hover_text(lang.text(Text::CancelPreview))
+        .clicked()
+    {
+        actions.editor = Some((Action::CancelPaste, None));
+    }
+}
+
+fn horizontal_strip(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::ScrollArea::horizontal()
+        .max_height(ui.available_height())
+        .auto_shrink([false, true])
+        .scroll_source(egui::scroll_area::ScrollSource {
+            drag: false,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            ui.horizontal(contents);
+        });
 }
 
 fn accent_button(label: &str) -> egui::Button<'_> {
@@ -657,59 +824,36 @@ fn inspector(
     view: &mut View,
     name: &str,
     position: Vec3,
-    opening: bool,
+    busy: bool,
     clipboard: &Clipboard,
     lang: Language,
     actions: &mut WindowActions,
 ) {
     let paste_locked = view.paste.locks_preview();
-    let placing = view.preview.is_some();
-    if !placing && !paste_locked {
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut view.selecting, false, lang.text(Text::Explore));
-            ui.selectable_value(&mut view.selecting, true, lang.text(Text::Select));
-        });
-        if !view.selecting {
-            stop_marking(&mut view.selection);
-        }
+    let section = if view.preview.is_some() || paste_locked {
+        Some(Text::Placement)
+    } else if view.selecting {
+        Some(Text::Select)
     } else {
-        ui.heading(lang.text(Text::Placement));
+        None
+    };
+    if let Some(section) = section {
+        ui.heading(lang.text(section));
+        ui.add_space(4.0);
     }
-    ui.add_space(4.0);
-    ui.add_enabled_ui(!opening, |ui| {
-        actions.paste = paste_status(ui, &view.paste, name, lang);
-        if !paste_locked && let Some(preview) = &mut view.preview {
-            let recalculating = view
-                .stream
-                .as_ref()
-                .is_some_and(|stream| stream.preview_busy());
-            preview_controls(ui, preview, recalculating, lang);
-            view.air_mode = preview.mode;
-            if ui.small_button(lang.text(Text::CancelPreview)).clicked() {
-                actions.editor = Some((Action::CancelPaste, None));
-            } else if ui
-                .add_enabled(
-                    preview.target_valid,
-                    egui::Button::new(lang.text(Text::PreparePaste)),
-                )
-                .clicked()
-            {
-                actions.paste = Some(PasteAction::Prepare);
-            }
-        } else if !placing && !paste_locked {
-            if view.selecting
-                && selection_controls(ui, &mut view.selection, position, clipboard.copying(), lang)
-            {
-                actions.editor = Some((Action::Copy, None));
-            }
-            if ui
-                .add_enabled(
-                    clipboard.current.is_some(),
-                    egui::Button::new(lang.text(Text::PreviewButton)),
-                )
-                .clicked()
-            {
-                actions.editor = Some((Action::StartPaste, None));
+    ui.add_enabled_ui(!busy, |ui| {
+        if let Some(action) = paste_status(ui, &view.paste, name, lang) {
+            actions.paste.get_or_insert(action);
+        }
+        if !paste_locked {
+            if let Some(preview) = &mut view.preview {
+                let recalculating = view
+                    .stream
+                    .as_ref()
+                    .is_some_and(|stream| stream.preview_busy());
+                preview_controls(ui, preview, recalculating, lang);
+            } else if view.selecting {
+                selection_details(ui, &mut view.selection, position, lang);
             }
         }
     });
@@ -835,14 +979,20 @@ fn status_bar(
     lang: Language,
     bindings: &Bindings,
 ) {
+    let busy = workspace.pending.is_some() || view.paste.writes();
+    let scene = view.stream.is_some() || view.demo_scene.is_some();
+    command_strip(ctx, |ui| {
+        if scene && !busy && !input_blocked(ctx) {
+            help_bar(ui, view, captured, clipboard, lang, bindings);
+        }
+    });
     egui::TopBottomPanel::bottom("status")
-        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(10, 4)))
+        .exact_height(25.0)
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(9, 4)))
         .show(ctx, |ui| {
-            let busy = workspace.pending.is_some() || view.paste.writes();
-            let scene = view.stream.is_some() || view.demo_scene.is_some();
             let notice = status_notice(workspace, view, lang);
             if scene || notice.is_some() {
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
                     if scene {
                         ui.monospace(lang.format(
                             Text::Coordinates,
@@ -886,10 +1036,14 @@ fn status_bar(
                     }
                 });
             }
-            if scene && !busy && !input_blocked(ctx) {
-                help_bar(ui, view, captured, clipboard, lang, bindings);
-            }
         });
+}
+
+fn command_strip(ctx: &egui::Context, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::TopBottomPanel::bottom("contextual commands")
+        .exact_height(33.0)
+        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(9, 4)))
+        .show(ctx, |ui| horizontal_strip(ui, contents));
 }
 
 fn status_notice(
@@ -973,55 +1127,57 @@ fn help_bar(
         })
     };
     let context = tools_context(view);
-    ui.horizontal_wrapped(|ui| {
-        let mut hint = |controls: String, label: Text| {
-            if !controls.is_empty() {
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new(controls).small().strong());
-                    ui.label(egui::RichText::new(lang.text(label)).small().color(MUTED));
+    let mut hint = |controls: String, label: Text| {
+        if !controls.is_empty() {
+            egui::Frame::new()
+                .fill(LINE)
+                .corner_radius(3)
+                .inner_margin(egui::Margin::symmetric(5, 2))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(controls).small().strong())
                 });
-            }
-        };
-        let editor = [
-            (Action::MarkCorner, Text::ActionMark),
-            (Action::CancelSelection, Text::ActionCancel),
-            (Action::Copy, Text::ActionCopy),
-            (Action::StartPaste, Text::ActionPaste),
-            (Action::Place, Text::ActionPlace),
-            (Action::RepeatPlace, Text::ActionRepeat),
-            (Action::CancelPaste, Text::ActionCancel),
-        ];
-        for (action, label) in editor {
-            if bindings.available(action, context)
-                && action_enabled(action, view, clipboard, captured)
-            {
-                hint(binding(action), label);
-            }
+            ui.label(egui::RichText::new(lang.text(label)).small().color(MUTED));
+            ui.add_space(9.0);
         }
-        if captured {
-            hint(
-                [
-                    Action::CameraForward,
-                    Action::CameraLeft,
-                    Action::CameraBackward,
-                    Action::CameraRight,
-                ]
+    };
+    let editor = [
+        (Action::MarkCorner, Text::ActionMark),
+        (Action::CancelSelection, Text::ActionCancel),
+        (Action::Copy, Text::ActionCopy),
+        (Action::StartPaste, Text::ActionPaste),
+        (Action::Place, Text::ActionPlace),
+        (Action::RepeatPlace, Text::ActionRepeat),
+        (Action::CancelPaste, Text::ActionCancel),
+    ];
+    for (action, label) in editor {
+        if bindings.available(action, context) && action_enabled(action, view, clipboard, captured)
+        {
+            hint(binding(action), label);
+        }
+    }
+    if captured {
+        hint(
+            [
+                Action::CameraForward,
+                Action::CameraLeft,
+                Action::CameraBackward,
+                Action::CameraRight,
+            ]
+            .map(binding)
+            .join(" "),
+            Text::CameraMove,
+        );
+        hint(
+            [Action::CameraUp, Action::CameraDown]
                 .map(binding)
-                .join(" "),
-                Text::CameraMove,
-            );
-            hint(
-                [Action::CameraUp, Action::CameraDown]
-                    .map(binding)
-                    .join(" / "),
-                Text::CameraHeight,
-            );
-            hint(binding(Action::CameraBoost), Text::CameraBoost);
-            hint(binding(Action::CameraRelease), Text::CameraRelease);
-        } else {
-            hint(binding(Action::CameraLook), Text::CameraLook);
-        }
-    });
+                .join(" / "),
+            Text::CameraHeight,
+        );
+        hint(binding(Action::CameraBoost), Text::CameraBoost);
+        hint(binding(Action::CameraRelease), Text::CameraRelease);
+    } else {
+        hint(binding(Action::CameraLook), Text::CameraLook);
+    }
 }
 
 fn opening_notice(ui: &mut egui::Ui, workspace: &mut Workspace, lang: Language) {
@@ -1163,20 +1319,6 @@ fn preview_controls(
     ui.label(egui::RichText::new(&preview.source.source_name).color(ACCENT));
     let [x, y, z] = preview.volume().dimensions();
     ui.monospace(lang.format(Text::Dimensions, &[&x, &y, &z]));
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(
-            &mut preview.mode,
-            AirMode::Include,
-            lang.text(Text::IncludeAir),
-        )
-        .on_hover_text(lang.text(Text::IncludeAirHelp));
-        ui.selectable_value(
-            &mut preview.mode,
-            AirMode::Ignore,
-            lang.text(Text::IgnoreAir),
-        )
-        .on_hover_text(lang.text(Text::IgnoreAirHelp));
-    });
     ui.add_space(5.0);
     ui.label(lang.text(Text::Origin));
     let mut origin = preview.origin();
@@ -1188,15 +1330,6 @@ fn preview_controls(
         preview.moving = false;
         preview.target_valid = true;
     }
-    let label = if preview.moving {
-        Text::Precise
-    } else {
-        Text::Follow
-    };
-    if ui.button(lang.text(label)).clicked() {
-        preview.moving = !preview.moving;
-        preview.target_valid = !preview.moving;
-    }
     if preview.moving && !preview.target_valid {
         ui.label(egui::RichText::new(lang.text(Text::NoPasteTarget)).color(MUTED));
     } else if recalculating {
@@ -1204,24 +1337,12 @@ fn preview_controls(
     }
 }
 
-fn selection_controls(
-    ui: &mut egui::Ui,
-    selection: &mut Selection,
-    position: Vec3,
-    copying: bool,
-    lang: Language,
-) -> bool {
-    if ui.button(lang.text(Text::PickBoth)).clicked() {
-        arm_pick(selection, 0, true);
-    }
+fn selection_details(ui: &mut egui::Ui, selection: &mut Selection, position: Vec3, lang: Language) {
     if let Some(corner) = selection.picking {
         ui.label(
             egui::RichText::new(lang.format(Text::PickCorner, &[&corner_name(corner)]))
                 .color(ACCENT),
         );
-        if ui.small_button(lang.text(Text::CancelMark)).clicked() {
-            stop_marking(selection);
-        }
     }
     if selection.missed {
         ui.label(egui::RichText::new(lang.text(Text::PickMiss)).color(ALERT));
@@ -1231,31 +1352,13 @@ fn selection_controls(
             corner_controls(ui, selection, corner, position, lang)
         });
     }
-    if selection.corners.iter().any(Option::is_some)
-        && ui.small_button(lang.text(Text::ClearSelection)).clicked()
-    {
-        *selection = Selection::default();
-    }
     if let Some(volume) = selection.volume() {
         let [x, y, z] = volume.dimensions();
         ui.monospace(lang.format(Text::Dimensions, &[&x, &y, &z]));
-        match volume.validate() {
-            Ok(()) => {
-                return ui
-                    .add_enabled(
-                        !copying && selection.picking.is_none(),
-                        egui::Button::new(lang.text(Text::CopyButton)),
-                    )
-                    .clicked();
-            }
-            Err(error) => {
-                ui.label(
-                    egui::RichText::new(Diagnostic::from_error(error).message(lang)).color(ALERT),
-                );
-            }
+        if let Err(error) = volume.validate() {
+            ui.label(egui::RichText::new(Diagnostic::from_error(error).message(lang)).color(ALERT));
         }
     }
-    false
 }
 
 const COORDINATE_LIMITS: [(i32, i32); 3] = [
@@ -1347,6 +1450,39 @@ fn stop_marking(selection: &mut Selection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contextual_commands_reserve_the_same_viewport_space_when_empty_or_overflowing() {
+        for width in [520.0, 1280.0] {
+            let ctx = egui::Context::default();
+            let mut bottom_edge = 0.0;
+            let mut draw = |count| {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 600.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        command_strip(ctx, |ui| {
+                            for _ in 0..count {
+                                ui.label("Shift+Clic izquierdo · Repetir");
+                            }
+                        });
+                        bottom_edge = ctx.available_rect().bottom();
+                    },
+                );
+                bottom_edge
+            };
+            let empty = draw(0);
+            assert!(empty < 600.0);
+            assert_eq!(draw(12), empty);
+            assert_eq!(draw(12), empty);
+            assert_eq!(draw(0), empty);
+        }
+    }
 
     #[test]
     fn dragging_a_world_tab_only_detaches_when_released_outside() {
