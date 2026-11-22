@@ -10,42 +10,32 @@ Usa Rust estable con el toolchain MSVC, las herramientas de compilación de C++ 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     $env:Path = (Join-Path $env:USERPROFILE '.cargo/bin') + ';' + $env:Path
 }
-cargo run --release
+cargo run --release --locked
 ```
 
-**Abrir mundo** carga una copia en la ventana actual. **Abrir en otra ventana** conserva el mundo y la cámara que ya estaban abiertos. Elige la carpeta que contiene `level.dat` y `region`. También puedes pasar esa carpeta en la línea de comandos.
+Elige la carpeta que contiene `level.dat` y `region`. También puedes pasarla al iniciar la aplicación.
 
 ```powershell
-cargo run --release -- "C:\Mundos de prueba\Bosque"
+cargo run --release --locked -- "C:\Mundos de prueba\Bosque"
 ```
 
-Mantén pulsado el botón derecho sobre el visor para mirar con el ratón. Usa **WASD** para desplazarte, **Espacio** y **Ctrl izquierdo** para subir y bajar, y **Mayús** para acelerar. Suelta el botón o pulsa **Esc** para liberar el cursor.
+Si Cargo muestra `link.exe not found`, instala **Desarrollo para el escritorio con C++** en Visual Studio 2022, con MSVC y un SDK de Windows. Ejecuta el comando desde **x64 Native Tools Command Prompt for VS 2022**. [Requisitos de Rust para Windows](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup)
 
-### Si Cargo muestra `link.exe not found`
+## Comprobar v0.2.0 en Windows
 
-En Visual Studio Installer, elige **Modificar** en Visual Studio 2022 y agrega **Desarrollo para el escritorio con C++**. Confirma que queden seleccionados **MSVC v143 para x64/x86** y un **SDK de Windows 10 u 11**. Después abre **x64 Native Tools Command Prompt for VS 2022** desde Inicio y ejecuta estos comandos desde el repositorio. [Requisitos de Rust para Windows](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup)
+Cierra Minecraft y usa copias de Bosque y Pradera guardadas en Java 1.21.1. Conserva los respaldos mientras compruebas las escrituras.
 
-```cmd
-where link
-cargo run --release
-```
+1. **Visor y pestañas.** Abre Bosque y Pradera con **Abrir mundo**. Cambia de pestaña después de mover la cámara o marcar una esquina en cada mundo. Ambos deben conservar su posición y selección. Arrastra la pestaña Pradera más allá del borde de la ventana y suelta. Pradera debe aparecer en su propia ventana y Bosque debe seguir abierto. Prueba cerrar una pestaña, cerrar una ventana y volver a abrir un mundo. **Opciones** permite reemplazar la pestaña y abrir directamente en otra ventana. Intenta volver a abrir una carpeta que ya tenga una pestaña.
+2. **Cámara y selección.** Mantén pulsado el botón derecho sobre el terreno para mirar. La barra inferior muestra los controles de vuelo durante la captura del cursor. Abre **Selección 3D**, pulsa **Marcar A y B en el visor** y selecciona dos bloques. Comprueba el contorno, las marcas y las dimensiones inclusivas. Ajusta X, Y o Z y copia con **Ctrl+C**. En un campo de coordenadas con texto seleccionado, Ctrl+C debe copiar el texto a Windows y conservar la construcción compartida. Abre **Portapapeles compartido** en ambas ventanas para comparar el origen y las dimensiones.
+3. **Previsualización y cancelación.** En Pradera, pulsa **Ctrl+V**. Mueve el cursor por caras del terreno y revisa la esquina mínima mostrada en el inspector. Usa **Fijar coordenadas** o edita X, Y y Z para una colocación precisa. Prueba **Con aire** y **Sin aire**. Gira la cámara con el botón derecho y comprueba que la previsualización sigue activa. Cancela con **Esc** y repite con **Retroceso**. La copia debe seguir disponible y los hashes del mundo deben coincidir. En un campo de texto y en el diálogo de apertura, comprueba que las teclas se aplican al control que tiene el foco.
+4. **Guardar una vez y repetir.** Apunta a un lugar válido de una copia de Pradera. Mantén pulsado el botón izquierdo y comprueba que se guarda una sola copia. Vuelve a iniciar la vista previa y coloca tres copias en lugares distintos con **Mayús + clic izquierdo**. Termina con un clic sin modificadores. Revisa un respaldo por operación y la ubicación de los bloques en el destino. Repite con varias pestañas y dos ventanas. Para revisar el destino y las regiones antes de guardar, usa **Preparar pegado** y **Confirmar pegado**.
+5. **Datos de Minecraft.** Copia un volumen con una escalera orientada, un cofre simple con objetos y un cartel escrito por ambos lados. Pruébalo en dos copias de destino, una con cada modo de aire. Cierra el destino en Blocko y ábrelo en Minecraft Java 1.21.1. Comprueba la orientación, el inventario, ambas caras del cartel y los huecos.
+6. **Estados e idioma.** Prueba una carpeta incompatible, un mundo en uso por Minecraft y un destino inválido. Verifica el nombre del mundo, el mensaje y los detalles disponibles. Cambia a **English** desde **Idioma** con dos ventanas abiertas, reduce el ancho y cambia de pestaña. Revisa menús, estados, inspector y controles de la barra inferior en ambos idiomas. Los nombres de mundo, los datos del portapapeles y la edición activa deben conservarse.
+7. **Terreno.** Compara el mismo punto y orientación en Bosque y en Pradera con las capturas del MVP. Comprueba nieve, vegetación, elevaciones y carga progresiva en ambos mundos. En una zona con agua y hielo, revisa sus límites con el terreno a corta y media distancia. Haz la misma pasada con dos ventanas y compara la fluidez y el consumo con el Administrador de tareas.
 
-## Comprobar BLCK-1
+### Verificar que cancelar conserva los archivos
 
-1. Con Minecraft cerrado, prepara copias de Bosque y Pradera. Abre Bosque y comprueba que el nombre coincide con el mostrado en Minecraft. Recorre varios chunks y comprueba que el terreno se completa a medida que avanzas.
-2. Abre Pradera en otra ventana. Desplázate en Pradera y vuelve a Bosque. Su cámara debe seguir en las mismas coordenadas y con la misma orientación.
-3. En una de las ventanas, cambia al otro mundo y comprueba que el título y la cámara se actualizan. Cierra esa ventana y confirma que puedes seguir explorando en la restante. Repite cerrando primero la ventana inicial.
-4. Intenta abrir una copia que ya esté abierta en Minecraft y un mundo de otra versión. Blocko debe mostrar el error en la ventana que inició la apertura y conservar el mundo que ya mostraba.
-
-Para comprobar la lectura y el mallado inicial sin abrir una ventana, ejecuta el siguiente comando con cada copia. El resultado incluye el nombre, el punto de inicio y el número de vértices del primer chunk.
-
-```powershell
-cargo test
-cargo run --release -- --inspeccionar "C:\Mundos de prueba\Bosque"
-cargo run --release -- --inspeccionar "C:\Mundos de prueba\Pradera"
-```
-
-Para verificar que una exploración no modifica las copias, toma un inventario de rutas y hashes antes y después. Ejecuta el primer bloque antes de abrirlas y el segundo después de cerrar Blocko.
+Toma un inventario de archivos antes de explorar, copiar, previsualizar y cancelar. Cierra Blocko antes de comparar.
 
 ```powershell
 $copias = @('C:\Mundos de prueba\Bosque', 'C:\Mundos de prueba\Pradera')
@@ -62,35 +52,35 @@ $antes = Get-InventarioBlocko
 Compare-Object $antes (Get-InventarioBlocko)
 ```
 
-Si los inventarios coinciden, `Compare-Object` no imprime nada. Para probar las cámaras y el estado compartido con dos escenas pequeñas, ejecuta `cargo run -- --demo` y usa **Otra ventana de prueba** y **Compartir selección ficticia**.
+Si los inventarios coinciden, `Compare-Object` no imprime nada.
 
-## Comprobar BLCK-2
+### Pruebas de desarrollo
 
-1. Abre una copia de Bosque en Java 1.21.1. En **Selección 3D**, pulsa **Marcar A y B en el visor** y haz clic sobre dos bloques en esquinas opuestas de la construcción. Pulsa **Esc** para cancelar una marca pendiente.
-2. Ajusta los campos **X**, **Y** y **Z** de cada esquina para incluir los cimientos y el techo. También puedes iniciar una esquina con **Editar coordenadas**. El contorno y las dimensiones incluyen los bloques de ambas esquinas.
-3. Pulsa **Copiar volumen**. Comprueba el nombre y las dimensiones bajo **Portapapeles compartido**. El volumen conserva los bloques de aire, las propiedades de los bloques, el inventario de cofres simples y el texto de ambas caras de los carteles.
-4. Abre Pradera en otra ventana y comprueba que aparece la misma copia. Reemplaza el mundo de la primera ventana o ciérrala. La otra ventana conserva su cámara, su selección y el portapapeles compartido. Copia otro volumen desde Pradera y comprueba que reemplaza la copia anterior.
+```powershell
+cargo fmt --all -- --check
+cargo check --all-targets --locked
+cargo test --release --locked
+$env:BLOCKO_TEST_WORLDS = 'C:\Mundos de prueba'
+cargo test --release --locked -- --include-ignored
+cargo run --release --locked -- --inspeccionar "C:\Mundos de prueba\Bosque"
+```
 
-Una selección de hasta 1 048 576 bloques se copia en segundo plano. Si cruza chunks sin generar o contiene datos incompatibles, Blocko indica el problema y conserva la última copia exitosa. El portapapeles pertenece a la sesión de Blocko.
+Las pruebas ignoradas buscan **Bosque** y **Pradera** bajo `BLOCKO_TEST_WORLDS`. Requieren los fixtures de Java 1.21.1 que incluyen la selección de Bosque entre `(14, 66, -50)` y `(17, 73, -47)` y el cofre en `(86, -23, 119)`. La prueba de escritura prepara su propia copia de Pradera en el directorio temporal de Windows y conserva allí los respaldos.
 
-## Comprobar BLCK-3
+`cargo run --release --locked -- --demo` abre una escena pequeña para comprobar cámaras independientes y estado compartido sin cargar un mundo.
 
-1. Copia un volumen de Bosque y abre Pradera. Pulsa **Previsualizar pegado** en la ventana de Pradera. La copia se muestra en cian y el marco ámbar delimita el volumen.
-2. Pulsa **Mover en el visor** y haz clic en una cara del terreno para fijar el origen junto a esa cara. También puedes editar **X**, **Y** y **Z** para fijar la esquina de coordenadas mínimas del volumen. **Esc** cancela el movimiento pendiente.
-3. Coloca el volumen de modo que algunos huecos de la copia coincidan con terreno. **Sin aire** conserva el terreno en esos lugares. **Con aire** muestra el espacio que se vaciaría. Ambos modos conservan la misma copia en el portapapeles.
-4. Pulsa **Cancelar vista previa** y repite la colocación. El terreno vuelve a verse como antes y el portapapeles sigue disponible. Compara los hashes de las copias con el mismo procedimiento de BLCK-1.
+## Guardado y recuperación
 
-## Comprobar BLCK-4
+Blocko verifica las huellas de los archivos al abrir, preparar y confirmar, y toma el bloqueo exclusivo de `session.lock` al guardar. Guarda los originales de las regiones afectadas en `blocko-backups/pegado-…`, dentro de la copia de destino. Si se interrumpe una escritura, vuelve a abrir esa copia en Blocko antes de cargarla en Minecraft. Si un cambio externo impide la recuperación, la aplicación indica dónde encontrar el respaldo.
 
-1. Cierra los mundos en Minecraft y abre copias de Bosque y Pradera en Blocko. Copia un volumen que incluya la escalera, el cofre y el cartel. En Pradera, ajusta la vista previa y el modo de aire.
-2. Pulsa **Preparar pegado**. Comprueba la ruta de la copia de destino, el volumen, el modo de aire y el número de chunks y regiones. **Volver a la vista previa** descarta el plan preparado.
-3. Pulsa **Confirmar pegado** y espera el resultado. La ventana recarga el terreno y muestra la carpeta del respaldo. Conserva el respaldo mientras compruebas el resultado.
-4. Cierra la copia de Pradera en Blocko para liberar el bloqueo. Ábrela en Minecraft Java **1.21.1** y comprueba la ubicación, la orientación de la escalera, el inventario y el texto del cartel. Repite con una segunda copia de Pradera para comprobar el otro modo de aire.
+El guardado requiere chunks completos de Java 1.21.1 y admite hasta 256 MiB de regiones preparadas por operación. Blocko rechaza cambios que afectarían datos incompatibles, como entidades de bloque fuera del alcance, puntos de interés y chunks externos. La copia admite hasta 1 048 576 bloques.
 
-Blocko verifica las huellas de los archivos al abrir, preparar y confirmar, y toma el bloqueo exclusivo de `session.lock` al guardar. Guarda los originales de las regiones afectadas en `blocko-backups/pegado-…`, dentro del mundo de destino. Si se interrumpe la escritura, vuelve a abrir esa copia en Blocko antes de cargarla en Minecraft para que pueda restaurar las regiones pendientes. Si otra aplicación cambió una región de forma que impide restaurarla, Blocko indica la ruta del respaldo.
+## Traducciones y controles
 
-El guardado requiere chunks completos de Java 1.21.1 y admite hasta 256 MiB de regiones preparadas por operación. Blocko rechaza los cambios que afectarían datos incompatibles, como entidades de bloque fuera del alcance, puntos de interés y chunks externos.
+Añade el idioma a `Language` y `Language::ALL` en `src/i18n.rs`, agrega su nombre y su columna de textos al catálogo y conserva los marcadores `{0}`, `{1}`, etc. Ajusta los mensajes de diagnóstico en `src/diagnostics.rs`. El español es el idioma inicial y sirve de respaldo para traducciones vacías. La preferencia se aplica a todas las ventanas durante la sesión.
+
+Los controles predeterminados y sus contextos viven en `src/actions.rs`. Para probar una reasignación, cambia una combinación en la tabla de `Bindings::default`. La barra inferior usa el mismo registro para mostrar la tecla o gesto. Se conservan los identificadores de acción y el contenido de Minecraft al traducir la interfaz.
 
 ## Alcance del visor
 
-Los chunks completos del Overworld se leen bajo demanda y se mallan en segundo plano. El lector usa `fastnbt` para interpretar NBT y transmite al modelo interno las paletas y propiedades de bloques. El visor aproxima las formas y texturas con mallas por chunk y un atlas original. Algunas formas, materiales y efectos de Minecraft se simplifican. La cámara es libre y atraviesa la geometría.
+Los chunks completos del Overworld se leen bajo demanda y se mallan en segundo plano. Blocko usa `fastnbt` para interpretar NBT y conserva las paletas y propiedades en su modelo interno. El visor aproxima formas y texturas con mallas por chunk y un atlas original. La cámara es libre y atraviesa la geometría.
