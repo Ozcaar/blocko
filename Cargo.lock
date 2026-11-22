@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "blocko"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bevy",
@@ -1273,6 +1273,7 @@ dependencies = [
  "fastnbt",
  "flate2",
  "lz4-java-wrc",
+ "raw-window-handle",
  "rfd",
  "serde",
  "windows-sys 0.61.2",

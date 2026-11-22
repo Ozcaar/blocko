@@ -7,53 +7,68 @@ use bevy::{
 };
 
 pub use crate::world_write::{PastePlan, PasteResult, PasteSummary};
-use crate::{editor::View, world_write};
+use crate::{diagnostics::Diagnostic, editor::View, world_write};
 
 #[derive(Default)]
 pub enum PasteState {
     #[default]
     Idle,
-    Preparing(Task<Result<PastePlan>>),
+    Preparing(Option<bool>, Task<Result<PastePlan>>),
     Ready(PastePlan),
-    Saving(Task<Result<PasteResult>>),
+    Saving(bool, Task<Result<PasteResult>>),
     Saved(PasteResult),
-    Error(String),
+    Error(Diagnostic),
+    TargetChanged,
 }
 
 impl PasteState {
     pub fn locks_preview(&self) -> bool {
-        matches!(self, Self::Preparing(_) | Self::Ready(_) | Self::Saving(_))
+        matches!(
+            self,
+            Self::Preparing(..) | Self::Ready(_) | Self::Saving(..)
+        )
+    }
+
+    pub fn writes(&self) -> bool {
+        matches!(self, Self::Preparing(Some(_), _) | Self::Saving(..))
     }
 
     pub fn is_saving(&self) -> bool {
-        matches!(self, Self::Saving(_))
+        matches!(self, Self::Saving(..))
     }
 }
 
 #[derive(Clone, Copy)]
 pub enum PasteAction {
     Prepare,
+    Place { repeat: bool },
     Confirm,
     Discard,
 }
 
 pub fn apply_action(view: &mut View, action: PasteAction) {
     match action {
-        PasteAction::Discard if !view.paste.is_saving() => {
+        PasteAction::Discard if !view.paste.writes() => {
             view.paste = PasteState::Idle;
         }
-        PasteAction::Prepare if !view.paste.locks_preview() && view.pending.is_none() => {
+        PasteAction::Prepare | PasteAction::Place { .. } if !view.paste.locks_preview() => {
             let (Some(preview), Some(stream)) = (view.preview.as_mut(), view.stream.as_ref())
             else {
                 return;
             };
-            preview.moving = false;
-            preview.notice = None;
+            let repeat = match action {
+                PasteAction::Place { repeat } => Some(repeat),
+                _ => None,
+            };
+            if !preview.target_valid {
+                return;
+            }
             view.selection.picking = None;
             view.selection.pick_b_after_a = false;
             let preview = preview.clone();
             let world = stream.source();
             view.paste = PasteState::Preparing(
+                repeat,
                 IoTaskPool::get().spawn(async move { world_write::prepare(world, preview) }),
             );
         }
@@ -61,50 +76,64 @@ pub fn apply_action(view: &mut View, action: PasteAction) {
             let PasteState::Ready(plan) = std::mem::take(&mut view.paste) else {
                 return;
             };
-            if view.pending.is_some()
-                || !view
-                    .stream
-                    .as_ref()
-                    .is_some_and(|stream| Arc::ptr_eq(&stream.source(), &plan.world))
-                || !view
-                    .preview
-                    .as_ref()
-                    .is_some_and(|preview| preview.same_mask(&plan.preview))
-            {
-                view.paste = PasteState::Error(
-                    "Cambió el destino o la vista previa. Prepara de nuevo el pegado".into(),
-                );
-                return;
-            }
-            view.paste =
-                PasteState::Saving(IoTaskPool::get().spawn(async move { world_write::save(plan) }));
+            save(view, plan, false);
         }
         _ => {}
     }
 }
 
+fn save(view: &mut View, plan: PastePlan, repeat: bool) {
+    if !view
+        .stream
+        .as_ref()
+        .is_some_and(|stream| Arc::ptr_eq(&stream.source(), &plan.world))
+        || !view
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.same_mask(&plan.preview))
+    {
+        view.paste = PasteState::TargetChanged;
+        return;
+    }
+    view.paste = PasteState::Saving(
+        repeat,
+        IoTaskPool::get().spawn(async move { world_write::save(plan) }),
+    );
+}
+
 pub fn finish(mut commands: Commands, mut views: Query<&mut View>) {
     for mut view in &mut views {
         match &mut view.paste {
-            PasteState::Preparing(task) => {
+            PasteState::Preparing(repeat, task) => {
+                let repeat = *repeat;
                 if let Some(result) = check_ready(task) {
-                    view.paste = match result {
-                        Ok(plan) => PasteState::Ready(plan),
-                        Err(error) => PasteState::Error(format!("{error:#}")),
-                    };
+                    match (result, repeat) {
+                        (Ok(plan), Some(repeat)) => save(&mut view, plan, repeat),
+                        (Ok(plan), None) => view.paste = PasteState::Ready(plan),
+                        (Err(error), _) => {
+                            view.paste = PasteState::Error(Diagnostic::from_error(error))
+                        }
+                    }
                 }
             }
-            PasteState::Saving(task) => {
+            PasteState::Saving(repeat, task) => {
+                let repeat = *repeat;
                 if let Some(result) = check_ready(task) {
                     view.paste = match result {
                         Ok(result) => {
-                            view.preview = None;
+                            if repeat {
+                                if let Some(preview) = &mut view.preview {
+                                    preview.target_valid = !preview.moving;
+                                }
+                            } else {
+                                view.preview = None;
+                            }
                             if let Some(stream) = &mut view.stream {
                                 stream.reload(&mut commands);
                             }
                             PasteState::Saved(result)
                         }
-                        Err(error) => PasteState::Error(format!("{error:#}")),
+                        Err(error) => PasteState::Error(Diagnostic::from_error(error)),
                     };
                 }
             }

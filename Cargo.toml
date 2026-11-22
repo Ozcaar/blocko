@@ -1,6 +1,6 @@
 [package]
 name = "blocko"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 publish = false
@@ -14,10 +14,11 @@ fastnbt = "2.6"
 flate2 = "1"
 lz4-java-wrc = "0.2"
 rfd = "0.17"
+raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_Memory"] }
 
 [profile.dev]
 opt-level = 1

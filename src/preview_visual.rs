@@ -80,12 +80,13 @@ struct PreviewScene {
     tiles: HashMap<Tile, TileRender>,
     jobs: HashMap<Tile, Task<Option<Mesh>>>,
     vertices: usize,
+    visible: bool,
 }
 
 impl PreviewScene {
     fn new(
         commands: &mut Commands,
-        window: Entity,
+        document: Entity,
         layer: usize,
         preview: &Placement,
         assets: &PreviewAssets,
@@ -95,7 +96,7 @@ impl PreviewScene {
             .spawn((
                 Transform::from_translation(position(origin)),
                 Visibility::default(),
-                ChildOf(window),
+                ChildOf(document),
             ))
             .id();
         let layers = RenderLayers::none().with(layer);
@@ -124,6 +125,7 @@ impl PreviewScene {
             tiles: HashMap::new(),
             jobs: HashMap::new(),
             vertices: 0,
+            visible: true,
         }
     }
 
@@ -237,14 +239,14 @@ pub struct PreviewScenes(HashMap<Entity, PreviewScene>);
 pub fn draw(
     mut commands: Commands,
     views: Query<(Entity, &View)>,
-    cameras: Query<&Transform>,
+    cameras: Query<(&Camera, &Transform)>,
     assets: Res<PreviewAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut scenes: Local<PreviewScenes>,
 ) {
-    scenes.0.retain(|window, scene| {
+    scenes.0.retain(|document, scene| {
         let match_preview = views
-            .get(*window)
+            .get(*document)
             .ok()
             .and_then(|(_, view)| view.preview.as_ref())
             .is_some_and(|preview| Arc::ptr_eq(&preview.source, &scene.source));
@@ -254,19 +256,35 @@ pub fn draw(
         match_preview
     });
 
-    for (window, view) in &views {
-        let (Some(preview), Ok(camera)) = (&view.preview, cameras.get(view.camera)) else {
+    for (document, view) in &views {
+        let (Some(preview), Ok((camera, transform))) = (&view.preview, cameras.get(view.camera))
+        else {
             continue;
         };
-        let scene = scenes.0.entry(window).or_insert_with(|| {
-            PreviewScene::new(&mut commands, window, view.layer, preview, &assets)
+        let visible = camera.is_active && preview.target_valid;
+        if !visible {
+            if let Some(scene) = scenes.0.get_mut(&document)
+                && scene.visible
+            {
+                scene.visible = false;
+                scene.jobs.clear();
+                commands.entity(scene.root).insert(Visibility::Hidden);
+            }
+            continue;
+        }
+        let scene = scenes.0.entry(document).or_insert_with(|| {
+            PreviewScene::new(&mut commands, document, view.layer, preview, &assets)
         });
-        scene.recenter(&mut commands, preview.origin(), camera.translation);
+        if !scene.visible {
+            scene.visible = true;
+            commands.entity(scene.root).insert(Visibility::Inherited);
+        }
+        scene.recenter(&mut commands, preview.origin(), transform.translation);
         scene.collect(&mut commands, &mut meshes, &assets);
     }
     let pending: usize = scenes.0.values().map(|scene| scene.jobs.len()).sum();
     let mut available = MAX_JOBS.saturating_sub(pending);
-    for scene in scenes.0.values_mut() {
+    for scene in scenes.0.values_mut().filter(|scene| scene.visible) {
         scene.schedule(&mut available);
     }
 }

@@ -199,9 +199,13 @@ impl Structure {
     }
 }
 
+pub enum CopyNotice {
+    Copied([u32; 3]),
+    Error(crate::diagnostics::Diagnostic),
+}
+
 struct CopyTask {
-    window: Entity,
-    source_name: String,
+    document: Entity,
     task: Task<Result<Structure>>,
 }
 
@@ -218,15 +222,14 @@ impl Clipboard {
 
     pub fn request(
         &mut self,
-        window: Entity,
+        document: Entity,
         source: Arc<JavaWorld>,
         volume: Volume,
     ) -> Result<()> {
         ensure!(!self.copying(), "Hay una copia en curso");
         volume.validate()?;
         self.pending = Some(CopyTask {
-            window,
-            source_name: source.name.clone(),
+            document,
             task: IoTaskPool::get().spawn(async move {
                 Structure::capture(source.name.clone(), volume, |pos| {
                     source.load_chunk_for_copy(pos)
@@ -244,16 +247,17 @@ pub fn finish_copying(mut clipboard: ResMut<Clipboard>, mut views: Query<&mut Vi
     let Some(result) = check_ready(&mut pending.task) else {
         return;
     };
-    let window = pending.window;
+    let document = pending.document;
     let notice = match result {
         Ok(structure) => {
+            let dimensions = structure.volume.dimensions();
             clipboard.current = Some(Arc::new(structure));
-            "Construcción copiada al portapapeles de Blocko".into()
+            CopyNotice::Copied(dimensions)
         }
-        Err(error) => format!("No se pudo copiar desde {}. {error:#}", pending.source_name),
+        Err(error) => CopyNotice::Error(crate::diagnostics::Diagnostic::from_error(error)),
     };
     clipboard.pending = None;
-    if let Ok(mut view) = views.get_mut(window)
+    if let Ok(mut view) = views.get_mut(document)
         && view.copying
     {
         view.copying = false;

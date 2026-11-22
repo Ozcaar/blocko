@@ -81,6 +81,10 @@ impl Stream {
         (visible, self.absent.len(), self.errors.len(), busy)
     }
 
+    pub fn path(&self) -> &std::path::Path {
+        &self.source.root
+    }
+
     pub fn source(&self) -> Arc<JavaWorld> {
         Arc::clone(&self.source)
     }

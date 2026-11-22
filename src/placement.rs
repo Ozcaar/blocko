@@ -17,7 +17,7 @@ pub struct Placement {
     pub source: Arc<Structure>,
     pub mode: AirMode,
     pub moving: bool,
-    pub notice: Option<String>,
+    pub target_valid: bool,
     origin: [i32; 3],
 }
 
@@ -27,7 +27,7 @@ impl Placement {
             source,
             mode: AirMode::default(),
             moving: false,
-            notice: None,
+            target_valid: true,
             origin: [0; 3],
         };
         placement.set_origin(suggested_origin);
@@ -55,6 +55,18 @@ impl Placement {
         let limits = self.limits();
         self.origin =
             std::array::from_fn(|axis| origin[axis].clamp(limits[axis].0, limits[axis].1));
+    }
+
+    pub fn set_cursor_target(&mut self, origin: Option<[i32; 3]>) {
+        self.target_valid = origin.is_some_and(|point| {
+            point
+                .into_iter()
+                .zip(self.limits())
+                .all(|(value, (min, max))| (min..=max).contains(&value))
+        });
+        if let Some(origin) = origin.filter(|_| self.target_valid) {
+            self.set_origin(origin);
+        }
     }
 
     pub fn volume(&self) -> Volume {

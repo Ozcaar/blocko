@@ -8,7 +8,10 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, WindowFocused},
 };
 
-use crate::editor::View;
+use crate::{
+    actions::{Action, Bindings},
+    editor::{View, Workspace},
+};
 
 #[derive(Component)]
 pub struct Flight {
@@ -34,7 +37,11 @@ impl Flight {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
     }
 
-    fn release(&mut self, cursor: &mut CursorOptions) {
+    pub fn captured(&self) -> bool {
+        self.captured
+    }
+
+    pub fn release(&mut self, cursor: &mut CursorOptions) {
         self.captured = false;
         self.keys.reset_all();
         self.velocity = Vec3::ZERO;
@@ -44,7 +51,9 @@ impl Flight {
 }
 
 pub fn fly(
-    mut windows: Query<(Entity, &Window, &mut CursorOptions, &View)>,
+    mut windows: Query<(Entity, &Window, &mut CursorOptions, &Workspace)>,
+    views: Query<&View>,
+    bindings: Res<Bindings>,
     mut cameras: Query<(&mut Flight, &mut Transform)>,
     mut mouse: MessageReader<MouseButtonInput>,
     mut keyboard: MessageReader<KeyboardInput>,
@@ -59,14 +68,18 @@ pub fn fly(
         .filter(|event| !event.focused)
         .map(|event| event.window)
         .collect();
-    for (entity, window, mut cursor, view) in &mut windows {
+    for (entity, window, mut cursor, workspace) in &mut windows {
+        let Ok(view) = views.get(workspace.active) else {
+            continue;
+        };
         let Ok((mut flight, mut transform)) = cameras.get_mut(view.camera) else {
             continue;
         };
         if !window.focused
             || blurred.contains(&entity)
-            || view.pending.is_some()
-            || view.paste.is_saving()
+            || workspace.pending.is_some()
+            || workspace.blocks_camera
+            || view.paste.writes()
         {
             if flight.captured {
                 flight.release(&mut cursor);
@@ -74,10 +87,9 @@ pub fn fly(
             continue;
         }
         let was_captured = flight.captured;
-        for click in clicks
-            .iter()
-            .filter(|click| click.window == entity && click.button == MouseButton::Right)
-        {
+        for click in clicks.iter().filter(|click| {
+            click.window == entity && bindings.camera_mouse(Action::CameraLook, click.button)
+        }) {
             match click.state {
                 ButtonState::Pressed
                     if view
@@ -102,7 +114,7 @@ pub fn fly(
                 ButtonState::Released => flight.keys.release(key.key_code),
             }
         }
-        if flight.keys.pressed(KeyCode::Escape) {
+        if bindings.camera_key_pressed(Action::CameraRelease, &flight.keys) {
             flight.release(&mut cursor);
             continue;
         }
@@ -112,16 +124,13 @@ pub fn fly(
         }
         transform.rotation = flight.rotation();
         let axis = |positive, negative| {
-            i32::from(flight.keys.pressed(positive)) as f32
-                - i32::from(flight.keys.pressed(negative)) as f32
+            i32::from(bindings.camera_key_pressed(positive, &flight.keys)) as f32
+                - i32::from(bindings.camera_key_pressed(negative, &flight.keys)) as f32
         };
-        let direction = axis(KeyCode::KeyW, KeyCode::KeyS) * *transform.forward()
-            + axis(KeyCode::KeyD, KeyCode::KeyA) * *transform.right()
-            + axis(KeyCode::Space, KeyCode::ControlLeft) * Vec3::Y;
-        let speed = if flight
-            .keys
-            .any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
-        {
+        let direction = axis(Action::CameraForward, Action::CameraBackward) * *transform.forward()
+            + axis(Action::CameraRight, Action::CameraLeft) * *transform.right()
+            + axis(Action::CameraUp, Action::CameraDown) * Vec3::Y;
+        let speed = if bindings.camera_key_pressed(Action::CameraBoost, &flight.keys) {
             52.0
         } else {
             16.0

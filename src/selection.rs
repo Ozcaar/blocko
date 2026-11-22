@@ -1,15 +1,8 @@
 use std::collections::HashMap;
 
-use bevy::{
-    camera::visibility::RenderLayers,
-    input::{ButtonState, keyboard::KeyboardInput, mouse::MouseButtonInput},
-    prelude::*,
-    window::{CursorGrabMode, CursorOptions, WindowFocused},
-};
+use bevy::{camera::visibility::RenderLayers, prelude::*};
 
-use crate::{
-    editor::View, placement::Placement, streaming::Stream, structure::Volume, world::ChunkPos,
-};
+use crate::{editor::View, streaming::Stream, structure::Volume, world::ChunkPos};
 
 const PICK_DISTANCE: f64 = 80.0;
 
@@ -18,7 +11,7 @@ pub struct Selection {
     pub corners: [Option<[i32; 3]>; 2],
     pub picking: Option<usize>,
     pub pick_b_after_a: bool,
-    pub notice: Option<String>,
+    pub missed: bool,
 }
 
 impl Selection {
@@ -28,157 +21,49 @@ impl Selection {
     }
 }
 
-pub fn pick(
-    mut windows: Query<(&Window, &CursorOptions, &mut View)>,
-    cameras: Query<(&Camera, &Transform)>,
-    mut mouse: MessageReader<MouseButtonInput>,
-    mut keyboard: MessageReader<KeyboardInput>,
-    mut focus: MessageReader<WindowFocused>,
-) {
-    let blurred: Vec<_> = focus
-        .read()
-        .filter(|event| !event.focused)
-        .map(|event| event.window)
-        .collect();
-    for key in keyboard.read() {
-        if key.key_code == KeyCode::Escape
-            && key.state == ButtonState::Pressed
-            && !blurred.contains(&key.window)
-            && let Ok((window, _, mut view)) = windows.get_mut(key.window)
-            && window.focused
-            && !view.paste.locks_preview()
-        {
-            if view.selection.picking.is_some() {
-                view.selection.picking = None;
-                view.selection.pick_b_after_a = false;
-                view.selection.notice = None;
-            }
-            if let Some(preview) = &mut view.preview
-                && preview.moving
-            {
-                preview.moving = false;
-                preview.notice = None;
-            }
-        }
-    }
-
-    for click in mouse.read() {
-        if click.button != MouseButton::Left
-            || click.state != ButtonState::Pressed
-            || blurred.contains(&click.window)
-        {
-            continue;
-        }
-        let Ok((window, cursor, mut view)) = windows.get_mut(click.window) else {
-            continue;
-        };
-        if !window.focused
-            || cursor.grab_mode != CursorGrabMode::None
-            || view.pending.is_some()
-            || view.paste.locks_preview()
-        {
-            continue;
-        }
-        let moving = view.preview.as_ref().is_some_and(|preview| preview.moving);
-        let corner = view
-            .selection
-            .picking
-            .filter(|&corner| corner < view.selection.corners.len());
-        if !moving && corner.is_none() {
-            continue;
-        }
-        let (Some(stream), Some(viewport), Some(position)) = (
-            view.stream.as_ref(),
-            view.viewport,
-            window.cursor_position(),
-        ) else {
-            continue;
-        };
-        if !viewport.contains(position) {
-            continue;
-        }
-        let Ok((camera, transform)) = cameras.get(view.camera) else {
-            continue;
-        };
-        if !camera.is_active {
-            continue;
-        }
-        // The window parent has the identity transform. Use the current pose before propagation.
-        let hit = camera
-            .viewport_to_world(&GlobalTransform::from(*transform), position)
-            .ok()
-            .and_then(|ray| {
-                trace_terrain(
-                    stream,
-                    ray.origin,
-                    *ray.direction,
-                    PICK_DISTANCE,
-                    view.preview.as_ref().filter(|preview| preview.moving),
-                )
-            });
-        let notice = "Acerca la cámara y haz clic en un bloque visible.";
-        if let Some(preview) = view.preview.as_mut().filter(|preview| preview.moving) {
-            if let Some(hit) = hit {
-                preview.set_origin(hit.adjacent());
-                preview.moving = false;
-                preview.notice = None;
-            } else {
-                preview.notice = Some(notice.into());
-            }
-            continue;
-        }
-        let Some(corner) = corner else {
-            continue;
-        };
-        let Some(hit) = hit else {
-            view.selection.notice = Some(notice.into());
-            continue;
-        };
-        let selection = &mut view.selection;
-        selection.corners[corner] = Some(hit.position);
-        selection.picking = (corner == 0 && selection.pick_b_after_a).then_some(1);
-        selection.pick_b_after_a = false;
-        selection.notice = None;
-    }
+pub fn mark_corner(selection: &mut Selection, block: Option<[i32; 3]>) {
+    let Some(corner) = selection.picking else {
+        return;
+    };
+    let Some(block) = block else {
+        selection.missed = true;
+        return;
+    };
+    selection.corners[corner] = Some(block);
+    selection.picking = (corner == 0 && selection.pick_b_after_a).then_some(1);
+    selection.pick_b_after_a = false;
+    selection.missed = false;
 }
 
-pub fn preview_origin(stream: &Stream, transform: &Transform) -> [i32; 3] {
-    let direction = *transform.forward();
-    trace_terrain(stream, transform.translation, direction, 48.0, None).map_or_else(
-        || {
-            (transform.translation + direction * 10.0)
-                .floor()
-                .as_ivec3()
-                .to_array()
-        },
-        Hit::adjacent,
-    )
-}
-
-fn trace_terrain(
+pub fn cursor_hit(
     stream: &Stream,
-    origin: Vec3,
-    direction: Vec3,
-    reach: f64,
-    masked: Option<&Placement>,
+    camera: &Camera,
+    transform: &Transform,
+    position: Vec2,
 ) -> Option<Hit> {
+    let ray = camera
+        .viewport_to_world(&GlobalTransform::from(*transform), position)
+        .ok()?;
+    trace_terrain(stream, ray.origin, *ray.direction, PICK_DISTANCE)
+}
+
+fn trace_terrain(stream: &Stream, origin: Vec3, direction: Vec3, reach: f64) -> Option<Hit> {
     first_block(origin, direction, reach, |[x, y, z]| {
-        !masked.is_some_and(|preview| preview.writes_block([x, y, z]).is_some())
-            && stream
-                .loaded_chunk(ChunkPos::from_block(x, z))
-                .and_then(|chunk| chunk.block(x.rem_euclid(16), y, z.rem_euclid(16)))
-                .is_some_and(|block| !block.is_air())
+        stream
+            .loaded_chunk(ChunkPos::from_block(x, z))
+            .and_then(|chunk| chunk.block(x.rem_euclid(16), y, z.rem_euclid(16)))
+            .is_some_and(|block| !block.is_air())
     })
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct Hit {
-    position: [i32; 3],
+pub struct Hit {
+    pub position: [i32; 3],
     face: [i32; 3],
 }
 
 impl Hit {
-    fn adjacent(self) -> [i32; 3] {
+    pub fn adjacent(self) -> [i32; 3] {
         std::array::from_fn(|axis| self.position[axis] + self.face[axis])
     }
 }
@@ -266,9 +151,9 @@ pub fn setup(
     };
     commands.insert_resource(SelectionAssets {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        volume: unlit(Color::srgb(0.46, 0.92, 0.81)),
+        volume: unlit(Color::srgb(0.32, 1.0, 0.88)),
         corners: [
-            unlit(Color::srgb(0.29, 0.92, 0.67)),
+            unlit(Color::srgb(0.20, 0.82, 1.0)),
             unlit(Color::srgb(1.0, 0.68, 0.28)),
         ],
     });
@@ -288,22 +173,24 @@ pub fn draw(
     assets: Res<SelectionAssets>,
     mut outlines: Local<Outlines>,
 ) {
-    // Closing the window recursively removes its outline and meshes via ChildOf.
-    outlines.0.retain(|window, _| views.get(*window).is_ok());
-    for (window, view) in &views {
-        let corners = if view.stream.is_some() {
+    // Closing the document recursively removes its outline and meshes via ChildOf.
+    outlines
+        .0
+        .retain(|document, _| views.get(*document).is_ok());
+    for (document, view) in &views {
+        let corners = if view.stream.is_some() && view.selecting && view.preview.is_none() {
             view.selection.corners
         } else {
             [None; 2]
         };
         if outlines
             .0
-            .get(&window)
+            .get(&document)
             .is_some_and(|old| old.corners == corners)
         {
             continue;
         }
-        if let Some(old) = outlines.0.remove(&window) {
+        if let Some(old) = outlines.0.remove(&document) {
             commands.entity(old.root).try_despawn();
         }
         if corners == [None; 2] {
@@ -311,9 +198,13 @@ pub fn draw(
         }
 
         let root = commands
-            .spawn((Transform::default(), Visibility::default(), ChildOf(window)))
+            .spawn((
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(document),
+            ))
             .id();
-        outlines.0.insert(window, Outline { corners, root });
+        outlines.0.insert(document, Outline { corners, root });
         let layers = RenderLayers::none().with(view.layer);
         let mut outline = |min, max, padding, width, material: &Handle<StandardMaterial>| {
             for transform in box_edges(min, max, padding, width) {
@@ -329,14 +220,14 @@ pub fn draw(
         if corners[0] != corners[1]
             && let Some(volume) = view.selection.volume()
         {
-            outline(volume.min, volume.max, 0.025, 0.037, &assets.volume);
+            outline(volume.min, volume.max, 0.045, 0.074, &assets.volume);
         }
         for (index, corner) in corners.into_iter().enumerate() {
             if index == 0 && corners[0] == corners[1] {
                 continue;
             }
             if let Some(position) = corner {
-                outline(position, position, 0.085, 0.062, &assets.corners[index]);
+                outline(position, position, 0.125, 0.10, &assets.corners[index]);
             }
         }
     }
