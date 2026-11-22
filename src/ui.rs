@@ -158,10 +158,10 @@ fn window_ui(
     egui::TopBottomPanel::top("barra")
         .frame(frame(BAR))
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
                     egui::RichText::new("Blocko")
-                        .size(21.0)
+                        .size(18.0)
                         .strong()
                         .color(ACCENT),
                 );
@@ -195,13 +195,18 @@ fn window_ui(
                 if opening {
                     ui.spinner();
                 }
+                if let Some(name) = name {
+                    ui.separator();
+                    ui.label(egui::RichText::new(name).strong());
+                    ui.label(egui::RichText::new("Overworld").color(MUTED));
+                }
             });
         });
 
     egui::TopBottomPanel::bottom("coordenadas")
-        .frame(frame(BAR))
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(12, 5)))
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
                     egui::RichText::new(if name.is_some() {
                         "Perspectiva 3D"
@@ -217,33 +222,16 @@ fn window_ui(
                         position.x, position.y, position.z
                     ));
                 }
-            });
-        });
-
-    let panel_width = (ctx.content_rect().width() * 0.27).clamp(165.0, 254.0);
-    egui::SidePanel::left("mundo")
-        .exact_width(panel_width)
-        .resizable(false)
-        .frame(frame(PANEL))
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new("Mundo activo").small().color(MUTED));
-                ui.label(
-                    egui::RichText::new(name.unwrap_or("Sin mundo abierto"))
-                        .size(21.0)
-                        .strong(),
-                );
                 if let Some(stream) = &view.stream {
-                    ui.label(egui::RichText::new("Overworld").color(ACCENT));
-                    ui.add_space(14.0);
                     let (visible, absent, failed, loading) = stream.status();
-                    ui.label(format!("{visible} chunks visibles"));
+                    ui.separator();
                     if loading {
                         ui.label(egui::RichText::new("Cargando terreno…").color(MUTED));
                     } else if visible == 0 && absent != 0 {
+                        ui.label("No hay terreno generado cerca.");
+                    } else {
                         ui.label(
-                            egui::RichText::new("No hay terreno generado cerca.").color(MUTED),
+                            egui::RichText::new(format!("{visible} chunks visibles")).color(MUTED),
                         );
                     }
                     if let Some(error) = stream.first_error() {
@@ -252,21 +240,62 @@ fn window_ui(
                         )
                         .on_hover_text(error);
                     }
-                } else if view.demo_scene.is_none() {
-                    ui.add_space(7.0);
+                }
+            });
+        });
+
+    let editing = view.preview.is_some() || view.paste.locks_preview();
+    if name.is_none() && view.demo_scene.is_none() {
+        egui::CentralPanel::default()
+            .frame(frame(PANEL))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space((ui.available_height() * 0.30).min(180.0));
+                    ui.heading("Abre un mundo de Minecraft");
                     ui.label(
                         egui::RichText::new(
                             "Elige la carpeta de una copia de Minecraft Java 1.21.1.",
                         )
                         .color(MUTED),
                     );
-                }
+                    ui.add_space(10.0);
+                    if ui
+                        .add_enabled(!opening, egui::Button::new("Abrir mundo…"))
+                        .clicked()
+                    {
+                        actions.open = Some(Destination::Current);
+                    }
+                    if let Some(error) = &view.error {
+                        ui.label(egui::RichText::new(error).color(ALERT));
+                    }
+                });
+            });
+        return actions;
+    }
+    let panel_width = (ctx.content_rect().width() * 0.24).clamp(168.0, 268.0);
+    egui::SidePanel::right("mundo")
+        .exact_width(panel_width)
+        .resizable(false)
+        .frame(frame(PANEL))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(if editing {
+                        "Colocación"
+                    } else {
+                        "Herramientas"
+                    })
+                    .size(17.0)
+                    .strong(),
+                );
                 if let Some(error) = &view.error {
                     ui.add_space(8.0);
                     ui.label(egui::RichText::new(error).color(ALERT));
                 }
-                panel_heading(ui, "Portapapeles compartido");
-                clipboard_contents(ui, clipboard);
+                ui.collapsing("Portapapeles compartido", |ui| {
+                    clipboard_contents(ui, clipboard)
+                });
                 if name.is_some()
                     && (clipboard.current.is_some()
                         || view.preview.is_some()
@@ -319,7 +348,7 @@ fn window_ui(
                         }
                     });
                 }
-                if name.is_some() {
+                if name.is_some() && !editing {
                     panel_heading(ui, "Selección 3D");
                     actions.copy = selection_controls(
                         ui,
@@ -344,13 +373,6 @@ fn window_ui(
                     if let Some(notice) = &view.copy_notice {
                         ui.label(egui::RichText::new(notice).color(MUTED));
                     }
-                }
-                if name.is_some() || view.demo_scene.is_some() {
-                    panel_heading(ui, "Cámara libre");
-                    ui.label(egui::RichText::new("Botón derecho + ratón para mirar").color(MUTED));
-                    ui.label(egui::RichText::new("WASD para moverte").color(MUTED));
-                    ui.label(egui::RichText::new("Espacio / Ctrl para subir y bajar").color(MUTED));
-                    ui.label(egui::RichText::new("Mayús para acelerar").color(MUTED));
                 }
                 if view.demo_scene.is_some() {
                     panel_heading(ui, "Prueba de ventanas");
