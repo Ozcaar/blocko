@@ -1,6 +1,6 @@
 # Blocko
 
-Visor de escritorio para explorar el Overworld de copias locales de Minecraft Java Edition 1.21.1 en Windows.
+Editor de escritorio para explorar el Overworld y copiar construcciones entre mundos locales de Minecraft Java Edition 1.21.1 en Windows.
 
 ## Ejecutar en Windows
 
@@ -79,6 +79,17 @@ Una selección de hasta 1 048 576 bloques se copia en segundo plano. Si cruza ch
 2. Pulsa **Mover en el visor** y haz clic en una cara del terreno para fijar el origen junto a esa cara. También puedes editar **X**, **Y** y **Z** para fijar la esquina de coordenadas mínimas del volumen. **Esc** cancela el movimiento pendiente.
 3. Coloca el volumen de modo que algunos huecos de la copia coincidan con terreno. **Sin aire** conserva el terreno en esos lugares. **Con aire** muestra el espacio que se vaciaría. Ambos modos conservan la misma copia en el portapapeles.
 4. Pulsa **Cancelar vista previa** y repite la colocación. El terreno vuelve a verse como antes y el portapapeles sigue disponible. Compara los hashes de las copias con el mismo procedimiento de BLCK-1.
+
+## Comprobar BLCK-4
+
+1. Cierra los mundos en Minecraft y abre copias de Bosque y Pradera en Blocko. Copia un volumen que incluya la escalera, el cofre y el cartel. En Pradera, ajusta la vista previa y el modo de aire.
+2. Pulsa **Preparar pegado**. Comprueba la ruta de la copia de destino, el volumen, el modo de aire y el número de chunks y regiones. **Volver a la vista previa** descarta el plan preparado.
+3. Pulsa **Confirmar pegado** y espera el resultado. La ventana recarga el terreno y muestra la carpeta del respaldo. Conserva el respaldo mientras compruebas el resultado.
+4. Cierra la copia de Pradera en Blocko para liberar el bloqueo. Ábrela en Minecraft Java **1.21.1** y comprueba la ubicación, la orientación de la escalera, el inventario y el texto del cartel. Repite con una segunda copia de Pradera para comprobar el otro modo de aire.
+
+Blocko verifica las huellas de los archivos al abrir, preparar y confirmar, y toma el bloqueo exclusivo de `session.lock` al guardar. Guarda los originales de las regiones afectadas en `blocko-backups/pegado-…`, dentro del mundo de destino. Si se interrumpe la escritura, vuelve a abrir esa copia en Blocko antes de cargarla en Minecraft para que pueda restaurar las regiones pendientes. Si otra aplicación cambió una región de forma que impide restaurarla, Blocko indica la ruta del respaldo.
+
+El guardado requiere chunks completos de Java 1.21.1 y admite hasta 256 MiB de regiones preparadas por operación. Blocko rechaza los cambios que afectarían datos incompatibles, como entidades de bloque fuera del alcance, puntos de interés y chunks externos.
 
 ## Alcance del visor
 

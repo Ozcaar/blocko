@@ -3,7 +3,10 @@ use std::{
     fs::{self, File, TryLockError},
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -15,8 +18,9 @@ use serde::Deserialize;
 use crate::world::{
     BlockEntity, BlockEntityRecord, BlockState, ChestItem, Chunk, ChunkPos, Section, SignText,
 };
+use crate::{transaction, world_write::WorldBaseline};
 
-const JAVA_1_21_1: i32 = 3955;
+pub(crate) const JAVA_1_21_1: i32 = 3955;
 const FIRST_FLAT_CHUNK_VERSION: i32 = 2860;
 const SECTOR_SIZE: u64 = 4096;
 const REGION_WIDTH: i32 = 32;
@@ -27,8 +31,11 @@ const WORLD_LIMIT: i32 = 30_000_000;
 pub struct JavaWorld {
     pub name: String,
     pub spawn: [i32; 3],
-    root: PathBuf,
-    session_lock: OnceLock<File>,
+    pub(crate) root: PathBuf,
+    session_lock: Mutex<Option<File>>,
+    io: RwLock<()>,
+    faulted: AtomicBool,
+    pub(crate) baseline: Mutex<Result<WorldBaseline, String>>,
 }
 
 impl JavaWorld {
@@ -36,61 +43,117 @@ impl JavaWorld {
         let root = path
             .canonicalize()
             .with_context(|| format!("No se pudo abrir {}", path.display()))?;
-        let session_lock = open_session_lock(&root)?;
-        let level = File::open(root.join("level.dat"))
-            .context("La carpeta debe contener el archivo level.dat de un mundo Java")?;
-        let nbt = read_limited(GzDecoder::new(level))?;
-        let header: Level<LevelHeader> = fastnbt::from_bytes(&nbt)
-            .context("El archivo level.dat no contiene metadatos Java válidos")?;
-        if header.data.version != JAVA_1_21_1 {
-            let version = header.data.version;
-            let detected = header
-                .data
-                .release
-                .and_then(|release| release.name)
-                .map_or_else(
-                    || format!("DataVersion {version}"),
-                    |name| format!("Minecraft Java {name} (DataVersion {version})"),
-                );
-            bail!(
-                "El mundo se guardó con {detected}. Blocko admite Minecraft Java 1.21.1 (DataVersion {JAVA_1_21_1})."
-            );
+        if !transaction::pending(&root)?.is_empty() {
+            read_level(&root)?;
+            let _lock = exclusive_session(&root)?;
+            read_level(&root)?;
+            transaction::recover(&root)?;
         }
-        let level: Level<LevelData> = fastnbt::from_bytes(&nbt).context(
-            "El archivo level.dat no contiene metadatos válidos de Minecraft Java 1.21.1",
-        )?;
-
+        let session_lock = open_session_lock(&root)?;
+        let (level, identity) = read_level(&root)?;
+        let baseline =
+            WorldBaseline::capture(&root, identity).map_err(|error| format!("{error:#}"));
         let mut world = Self {
-            name: level.data.name,
-            spawn: [level.data.spawn_x, level.data.spawn_y, level.data.spawn_z],
+            name: level.name,
+            spawn: [level.spawn_x, level.spawn_y, level.spawn_z],
             root,
-            session_lock: session_lock.map(OnceLock::from).unwrap_or_default(),
+            session_lock: Mutex::new(session_lock),
+            io: RwLock::new(()),
+            faulted: AtomicBool::new(false),
+            baseline: Mutex::new(baseline),
         };
         world.find_entry_point()?;
         Ok(world)
     }
 
     pub fn load_chunk(&self, pos: ChunkPos) -> Result<Option<Chunk>> {
+        self.load_checked(pos, false)
+    }
+
+    pub fn load_chunk_for_copy(&self, pos: ChunkPos) -> Result<Option<Chunk>> {
+        self.load_checked(pos, true)
+    }
+
+    fn load_checked(&self, pos: ChunkPos, exact: bool) -> Result<Option<Chunk>> {
+        self.with_read_lock(|| {
+            let result = self
+                .read_chunk(pos, exact)
+                .with_context(|| format!("No se pudo leer el chunk ({}, {})", pos.x, pos.z));
+            self.check_session_lock()?;
+            result
+        })
+    }
+
+    pub(crate) fn with_read_lock<T>(&self, read: impl FnOnce() -> Result<T>) -> Result<T> {
+        let _access = self
+            .io
+            .read()
+            .map_err(|_| anyhow!("Se interrumpió el acceso al mundo"))?;
         self.check_session_lock()?;
-        let result = self
-            .read_chunk(pos)
-            .with_context(|| format!("No se pudo leer el chunk ({}, {})", pos.x, pos.z));
-        self.check_session_lock()?;
+        read()
+    }
+
+    pub(crate) fn with_write_lock<T>(&self, write: impl FnOnce() -> Result<T>) -> Result<T> {
+        let _access = self
+            .io
+            .write()
+            .map_err(|_| anyhow!("Se interrumpió el acceso al mundo"))?;
+        ensure!(
+            !self.faulted.load(Ordering::Acquire),
+            "Cierra esta ventana y vuelve a abrir el mundo para recuperarlo"
+        );
+        let mut slot = self
+            .session_lock
+            .lock()
+            .map_err(|_| anyhow!("Se interrumpió el bloqueo de Minecraft"))?;
+        // Release only this explorer's shared lock. Other attached readers keep
+        // their locks, so the exclusive attempt fails without touching terrain.
+        drop(slot.take());
+        let lock = match exclusive_session(&self.root) {
+            Ok(lock) => lock,
+            Err(error) => {
+                *slot = open_session_lock(&self.root).ok().flatten();
+                return Err(error);
+            }
+        };
+        let mut guard = ExclusiveSession {
+            lock: Some(lock),
+            slot: &mut slot,
+            keep_exclusive: false,
+            root: &self.root,
+        };
+        let result = write();
+        if !transaction::pending(&self.root).is_ok_and(|pending| pending.is_empty()) {
+            // Keep the exclusive handle if a rollback needs recovery. Existing
+            // readers in this window are refused until the world is reopened.
+            guard.keep_exclusive = true;
+            self.faulted.store(true, Ordering::Release);
+        }
         result
     }
 
     fn check_session_lock(&self) -> Result<()> {
+        ensure!(
+            !self.faulted.load(Ordering::Acquire),
+            "El mundo tiene una restauración pendiente. Cierra esta ventana y vuelve a abrirlo"
+        );
         // A copied save can omit the lock file. Acquire and retain the lock
         // before returning data if the file appears while Blocko is open.
-        if self.session_lock.get().is_none()
-            && let Some(file) = open_session_lock(&self.root)?
-        {
-            let _ = self.session_lock.set(file);
+        let mut slot = self
+            .session_lock
+            .lock()
+            .map_err(|_| anyhow!("Se interrumpió el bloqueo de Minecraft"))?;
+        if slot.is_none() {
+            ensure!(
+                transaction::pending(&self.root)?.is_empty(),
+                "El mundo tiene una restauración pendiente. Reabre su carpeta en Blocko"
+            );
+            *slot = open_session_lock(&self.root)?;
         }
         Ok(())
     }
 
-    fn read_chunk(&self, pos: ChunkPos) -> Result<Option<Chunk>> {
+    fn read_chunk(&self, pos: ChunkPos, exact: bool) -> Result<Option<Chunk>> {
         let rx = pos.x.div_euclid(REGION_WIDTH);
         let rz = pos.z.div_euclid(REGION_WIDTH);
         let region_dir = self.root.join("region");
@@ -128,7 +191,7 @@ impl JavaWorld {
         } else {
             decompress(file.take(len - 1), compression)?
         };
-        decode_chunk(&nbt, pos)
+        decode_chunk_version(&nbt, pos, exact)
     }
 
     fn find_entry_point(&mut self) -> Result<()> {
@@ -223,6 +286,100 @@ impl JavaWorld {
     }
 }
 
+fn read_level(root: &Path) -> Result<(LevelData, blake3::Hash)> {
+    let compressed = transaction::read_bounded(&root.join("level.dat"), MAX_NBT_BYTES)
+        .context("La carpeta debe contener el archivo level.dat de un mundo Java")?;
+    let nbt = read_limited(GzDecoder::new(compressed.as_slice()))?;
+    let header: Level<LevelHeader> = fastnbt::from_bytes(&nbt)
+        .context("El archivo level.dat no contiene metadatos Java válidos")?;
+    if header.data.version != JAVA_1_21_1 {
+        let version = header.data.version;
+        let detected = header
+            .data
+            .release
+            .and_then(|release| release.name)
+            .map_or_else(
+                || format!("DataVersion {version}"),
+                |name| format!("Minecraft Java {name} (DataVersion {version})"),
+            );
+        bail!(
+            "El mundo se guardó con {detected}. Blocko admite Minecraft Java 1.21.1 (DataVersion {JAVA_1_21_1})."
+        );
+    }
+    let level: Level<LevelData> = fastnbt::from_bytes(&nbt)
+        .context("El archivo level.dat no contiene metadatos válidos de Minecraft Java 1.21.1")?;
+    Ok((level.data, blake3::hash(&compressed)))
+}
+
+struct ExclusiveSession<'a> {
+    lock: Option<File>,
+    slot: &'a mut Option<File>,
+    keep_exclusive: bool,
+    root: &'a Path,
+}
+
+impl Drop for ExclusiveSession<'_> {
+    fn drop(&mut self) {
+        let Some(lock) = self.lock.take() else {
+            return;
+        };
+        if self.keep_exclusive {
+            *self.slot = Some(lock);
+        } else {
+            drop(lock);
+            *self.slot = open_session_lock(self.root).ok().flatten();
+        }
+    }
+}
+
+fn exclusive_session(root: &Path) -> Result<File> {
+    transaction::plain_dir(root)?;
+    let path = root.join("session.lock");
+    if path.try_exists()? {
+        transaction::plain_file(&path)?;
+    }
+    let mut options = File::options();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+        options
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = options
+            .open(&path)
+            .context("No se pudo abrir session.lock para guardar")?;
+        ensure!(
+            file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+            "session.lock apunta a un enlace"
+        );
+        return lock_exclusive(file);
+    }
+    #[cfg(not(windows))]
+    lock_exclusive(
+        options
+            .open(&path)
+            .context("No se pudo abrir session.lock para guardar")?,
+    )
+}
+
+fn lock_exclusive(file: File) -> Result<File> {
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => {
+            bail!("El mundo está abierto en Minecraft o en otra ventana de Blocko")
+        }
+        Err(TryLockError::Error(error)) => {
+            Err(error).context("No se pudo bloquear el mundo para guardar")
+        }
+    }
+}
+
 fn open_session_lock(root: &Path) -> Result<Option<File>> {
     let mut options = File::options();
     options.read(true);
@@ -281,7 +438,7 @@ fn chunk_span(location: [u8; 4], file_len: u64) -> Result<Option<(u64, u64)>> {
     Ok(Some((start, capacity)))
 }
 
-fn decompress(data: impl Read, compression: u8) -> Result<Vec<u8>> {
+pub(crate) fn decompress(data: impl Read, compression: u8) -> Result<Vec<u8>> {
     match compression {
         1 => read_limited(GzDecoder::new(data)),
         2 => read_limited(ZlibDecoder::new(data)),
@@ -370,9 +527,18 @@ struct JavaBlockState {
     properties: BTreeMap<String, String>,
 }
 
-fn decode_chunk(nbt: &[u8], pos: ChunkPos) -> Result<Option<Chunk>> {
+pub(crate) fn decode_chunk(nbt: &[u8], pos: ChunkPos) -> Result<Option<Chunk>> {
+    decode_chunk_version(nbt, pos, false)
+}
+
+fn decode_chunk_version(nbt: &[u8], pos: ChunkPos, exact: bool) -> Result<Option<Chunk>> {
     let chunk: JavaChunk =
         fastnbt::from_bytes(nbt).context("Estructura NBT de chunk Java incompatible")?;
+    ensure!(
+        !exact || chunk.version == JAVA_1_21_1,
+        "Para copiar, los chunks deben haberse guardado en Minecraft Java 1.21.1. Este chunk tiene DataVersion {}",
+        chunk.version
+    );
     ensure!(
         (FIRST_FLAT_CHUNK_VERSION..=JAVA_1_21_1).contains(&chunk.version),
         "DataVersion {} de chunk incompatible",

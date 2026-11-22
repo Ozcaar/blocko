@@ -1269,11 +1269,13 @@ dependencies = [
  "anyhow",
  "bevy",
  "bevy_egui",
+ "blake3",
  "fastnbt",
  "flate2",
  "lz4-java-wrc",
  "rfd",
  "serde",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

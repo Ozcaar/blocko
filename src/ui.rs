@@ -6,6 +6,7 @@ use bevy_egui::{EguiContext, EguiFullOutput, EguiInput, egui};
 use crate::{
     editor::{self, DemoSelection, Destination, Overlay, PendingOpen, SceneAssets, View},
     flight::Flight,
+    paste::{self, PasteAction, PasteState, PasteSummary},
     placement::{AirMode, Placement},
     selection::{Selection, preview_origin},
     structure::{Clipboard, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y, Volume},
@@ -67,6 +68,9 @@ pub fn draw(
             actions.open = actions.open.or(requested.open);
             actions.copy = actions.copy.or(requested.copy);
             actions.start_preview |= requested.start_preview;
+            if let Some(action) = requested.paste {
+                actions.paste.get_or_insert(action);
+            }
             viewport = Some((ctx.available_rect(), ctx.pixels_per_point()));
         }));
         if let Some((rect, pixels_per_point)) = viewport {
@@ -86,7 +90,9 @@ pub fn draw(
                 });
             }
         }
-        if let Some(destination) = actions.open {
+        if let Some(action) = actions.paste {
+            paste::apply_action(&mut view, action);
+        } else if let Some(destination) = actions.open {
             view.error = None;
             view.pending = Some(PendingOpen::browse(destination));
         } else if let (Some(volume), Some(stream)) = (actions.copy, &view.stream) {
@@ -133,6 +139,7 @@ struct WindowActions {
     open: Option<Destination>,
     copy: Option<Volume>,
     start_preview: bool,
+    paste: Option<PasteAction>,
 }
 
 fn window_ui(
@@ -144,7 +151,9 @@ fn window_ui(
     clipboard: &Clipboard,
 ) -> WindowActions {
     let mut actions = WindowActions::default();
-    let busy = view.pending.is_some();
+    let opening = view.pending.is_some();
+    let paste_locked = view.paste.locks_preview();
+    let navigation_locked = opening || paste_locked;
     let name = view.stream.as_ref().map(|stream| stream.name.as_str());
     egui::TopBottomPanel::top("barra")
         .frame(frame(BAR))
@@ -166,7 +175,7 @@ fn window_ui(
                 };
                 if ui
                     .add_enabled(
-                        !busy,
+                        !navigation_locked,
                         egui::Button::new(egui::RichText::new(text).color(egui::Color32::BLACK))
                             .fill(ACCENT),
                     )
@@ -175,12 +184,15 @@ fn window_ui(
                     actions.open = Some(Destination::Current);
                 }
                 if ui
-                    .add_enabled(!busy, egui::Button::new("Abrir en otra ventana…"))
+                    .add_enabled(
+                        !navigation_locked,
+                        egui::Button::new("Abrir en otra ventana…"),
+                    )
                     .clicked()
                 {
                     actions.open = Some(Destination::NewWindow);
                 }
-                if busy {
+                if opening {
                     ui.spinner();
                 }
             });
@@ -223,7 +235,7 @@ fn window_ui(
                         .strong(),
                 );
                 if let Some(stream) = &view.stream {
-                    ui.label(egui::RichText::new("Overworld · Solo lectura").color(ACCENT));
+                    ui.label(egui::RichText::new("Overworld").color(ACCENT));
                     ui.add_space(14.0);
                     let (visible, absent, failed, loading) = stream.status();
                     ui.label(format!("{visible} chunks visibles"));
@@ -255,16 +267,30 @@ fn window_ui(
                 }
                 panel_heading(ui, "Portapapeles compartido");
                 clipboard_contents(ui, clipboard);
-                if name.is_some() && (clipboard.current.is_some() || view.preview.is_some()) {
-                    panel_heading(ui, "Vista previa de pegado");
+                if name.is_some()
+                    && (clipboard.current.is_some()
+                        || view.preview.is_some()
+                        || !matches!(view.paste, PasteState::Idle))
+                {
+                    panel_heading(
+                        ui,
+                        if paste_locked {
+                            "Guardar pegado"
+                        } else {
+                            "Vista previa de pegado"
+                        },
+                    );
                     let recalculating = view
                         .stream
                         .as_ref()
                         .is_some_and(|stream| stream.preview_busy());
-                    actions.start_preview = ui
-                        .add_enabled_ui(!busy, |ui| {
+                    ui.add_enabled_ui(!opening, |ui| {
+                        actions.paste = paste_status(ui, &view.paste);
+                        if !paste_locked {
                             let Some(preview) = &mut view.preview else {
-                                return ui.button("Previsualizar pegado").clicked();
+                                actions.start_preview = clipboard.current.is_some()
+                                    && ui.button("Previsualizar pegado").clicked();
+                                return;
                             };
                             if preview_controls(
                                 ui,
@@ -274,10 +300,24 @@ fn window_ui(
                                 recalculating,
                             ) {
                                 view.preview = None;
+                                if matches!(view.paste, PasteState::Error(_)) {
+                                    actions.paste = Some(PasteAction::Discard);
+                                }
+                                return;
                             }
-                            false
-                        })
-                        .inner;
+                            let prepare_label = if matches!(view.paste, PasteState::Error(_)) {
+                                "Reintentar preparación"
+                            } else {
+                                "Preparar pegado"
+                            };
+                            if ui
+                                .add_enabled(!preview.moving, egui::Button::new(prepare_label))
+                                .clicked()
+                            {
+                                actions.paste = Some(PasteAction::Prepare);
+                            }
+                        }
+                    });
                 }
                 if name.is_some() {
                     panel_heading(ui, "Selección 3D");
@@ -285,10 +325,11 @@ fn window_ui(
                         ui,
                         &mut view.selection,
                         position,
-                        busy,
+                        navigation_locked,
                         clipboard.copying(),
                     );
-                    if view.selection.picking.is_some()
+                    if !paste_locked
+                        && view.selection.picking.is_some()
                         && let Some(preview) = &mut view.preview
                     {
                         preview.moving = false;
@@ -356,6 +397,93 @@ fn clipboard_contents(ui: &mut egui::Ui, clipboard: &Clipboard) {
     if clipboard.copying() {
         ui.label(egui::RichText::new("Preparando una copia…").color(MUTED));
     }
+}
+
+fn paste_status(ui: &mut egui::Ui, state: &PasteState) -> Option<PasteAction> {
+    match state {
+        PasteState::Idle => None,
+        PasteState::Preparing(..) => {
+            paste_progress(ui, "Comprobando el mundo de destino…");
+            ui.small_button("Cancelar preparación")
+                .clicked()
+                .then_some(PasteAction::Discard)
+        }
+        PasteState::Ready(plan) => {
+            ui.label(
+                egui::RichText::new("Confirmar escribirá estos cambios en el mundo.")
+                    .strong()
+                    .color(ALERT),
+            );
+            paste_summary(ui, &plan.summary);
+            ui.label("Se creará un respaldo antes de escribir.");
+            ui.add_space(5.0);
+            if ui.button("Volver a la vista previa").clicked() {
+                return Some(PasteAction::Discard);
+            }
+            ui.add(
+                egui::Button::new(
+                    egui::RichText::new("Confirmar pegado").color(egui::Color32::BLACK),
+                )
+                .fill(ALERT),
+            )
+            .clicked()
+            .then_some(PasteAction::Confirm)
+        }
+        PasteState::Saving(..) => {
+            paste_progress(ui, "Guardando el mundo…");
+            None
+        }
+        PasteState::Saved(result) => {
+            ui.label(
+                egui::RichText::new(format!("Pegado guardado en {}", result.summary.world_name))
+                    .strong()
+                    .color(ACCENT),
+            );
+            ui.label("Respaldo");
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(result.backup.display().to_string()).monospace(),
+                )
+                .wrap(),
+            );
+            ui.small_button("Cerrar aviso")
+                .clicked()
+                .then_some(PasteAction::Discard)
+        }
+        PasteState::Error(error) => {
+            ui.label(egui::RichText::new(error).color(ALERT));
+            ui.small_button("Descartar aviso")
+                .clicked()
+                .then_some(PasteAction::Discard)
+        }
+    }
+}
+
+fn paste_progress(ui: &mut egui::Ui, message: &str) {
+    ui.horizontal(|ui| {
+        ui.spinner();
+        ui.label(egui::RichText::new(message).color(MUTED));
+    });
+}
+
+fn paste_summary(ui: &mut egui::Ui, summary: &PasteSummary) {
+    ui.label(egui::RichText::new(&summary.world_name).strong());
+    ui.add(
+        egui::Label::new(egui::RichText::new(summary.world_path.display().to_string()).monospace())
+            .wrap(),
+    );
+    let [x, y, z] = summary.volume.min;
+    ui.monospace(format!("Desde ({x}, {y}, {z})"));
+    let [x, y, z] = summary.volume.max;
+    ui.monospace(format!("Hasta ({x}, {y}, {z})"));
+    let mode = match summary.mode {
+        AirMode::Include => "Con aire",
+        AirMode::Ignore => "Sin aire",
+    };
+    ui.label(format!(
+        "{mode} · {} chunks · {} regiones",
+        summary.chunks, summary.regions
+    ));
 }
 
 fn preview_controls(

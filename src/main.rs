@@ -1,6 +1,9 @@
+mod anvil_write;
 mod editor;
 mod flight;
 mod java;
+mod java_paste;
+mod paste;
 mod placement;
 mod preview_mask;
 mod preview_visual;
@@ -8,8 +11,10 @@ mod selection;
 mod streaming;
 mod structure;
 mod terrain;
+mod transaction;
 mod ui;
 mod world;
+mod world_write;
 
 use std::{ffi::OsStr, path::PathBuf, process::ExitCode};
 

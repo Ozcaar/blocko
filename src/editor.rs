@@ -7,13 +7,14 @@ use bevy::{
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
     tasks::{IoTaskPool, Task, futures::check_ready},
-    window::{CursorOptions, ExitCondition, WindowRef, WindowResolution},
+    window::{CursorOptions, ExitCondition, WindowCloseRequested, WindowRef, WindowResolution},
 };
 use bevy_egui::{EguiContextSettings, EguiGlobalSettings, EguiPlugin};
 
 use crate::{
     flight::{self, Flight},
     java::JavaWorld,
+    paste::{self, PasteState},
     placement::Placement,
     preview_visual,
     selection::{self, Selection},
@@ -38,6 +39,7 @@ pub struct View {
     pub copying: bool,
     pub copy_notice: Option<String>,
     pub preview: Option<Placement>,
+    pub paste: PasteState,
 }
 
 #[derive(Component)]
@@ -106,6 +108,7 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: None,
             exit_condition: ExitCondition::OnAllClosed,
+            close_when_requested: false,
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
@@ -122,6 +125,8 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
             Update,
             (
                 flight::fly,
+                paste::finish,
+                close_windows,
                 finish_opening,
                 structure::finish_copying,
                 selection::pick,
@@ -235,6 +240,7 @@ fn new_view(commands: &mut Commands, layer: usize, world_name: Option<&str>) -> 
         copying: false,
         copy_notice: None,
         preview: None,
+        paste: PasteState::Idle,
     };
     (window, view)
 }
@@ -271,6 +277,22 @@ fn activate(commands: &mut Commands, window: Entity, view: &mut View, world: Jav
     view.copying = false;
     view.copy_notice = None;
     view.preview = None;
+    view.paste = PasteState::Idle;
+}
+
+fn close_windows(
+    mut commands: Commands,
+    mut requests: MessageReader<WindowCloseRequested>,
+    views: Query<&View>,
+) {
+    for request in requests.read() {
+        if !views
+            .get(request.window)
+            .is_ok_and(|view| view.paste.is_saving())
+        {
+            commands.entity(request.window).try_despawn();
+        }
+    }
 }
 
 fn world_title(name: &str) -> String {
@@ -376,6 +398,9 @@ fn stream_worlds(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for mut view in &mut views {
+        if view.paste.is_saving() {
+            continue;
+        }
         let layer = view.layer;
         let Ok(camera) = cameras.get(view.camera) else {
             continue;

@@ -63,7 +63,11 @@ pub fn fly(
         let Ok((mut flight, mut transform)) = cameras.get_mut(view.camera) else {
             continue;
         };
-        if !window.focused || blurred.contains(&entity) || view.pending.is_some() {
+        if !window.focused
+            || blurred.contains(&entity)
+            || view.pending.is_some()
+            || view.paste.is_saving()
+        {
             if flight.captured {
                 flight.release(&mut cursor);
             }

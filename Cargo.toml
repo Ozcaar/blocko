@@ -9,11 +9,15 @@ publish = false
 anyhow = "1"
 bevy = { version = "0.18.1", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log", "bevy_winit", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_light", "x11"] }
 bevy_egui = { version = "0.39.1", default-features = false, features = ["default_fonts", "render"] }
+blake3 = "1"
 fastnbt = "2.6"
 flate2 = "1"
 lz4-java-wrc = "0.2"
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [profile.dev]
 opt-level = 1

@@ -90,7 +90,6 @@ impl Structure {
         self.block_entities.len()
     }
 
-    #[cfg(test)]
     pub fn block_entity_at(&self, position: [u32; 3]) -> Option<&BlockEntity> {
         self.block_entities.get(&position)
     }
@@ -229,7 +228,9 @@ impl Clipboard {
             window,
             source_name: source.name.clone(),
             task: IoTaskPool::get().spawn(async move {
-                Structure::capture(source.name.clone(), volume, |pos| source.load_chunk(pos))
+                Structure::capture(source.name.clone(), volume, |pos| {
+                    source.load_chunk_for_copy(pos)
+                })
             }),
         });
         Ok(())

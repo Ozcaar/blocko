@@ -46,6 +46,7 @@ pub fn pick(
             && !blurred.contains(&key.window)
             && let Ok((window, _, mut view)) = windows.get_mut(key.window)
             && window.focused
+            && !view.paste.locks_preview()
         {
             if view.selection.picking.is_some() {
                 view.selection.picking = None;
@@ -71,7 +72,11 @@ pub fn pick(
         let Ok((window, cursor, mut view)) = windows.get_mut(click.window) else {
             continue;
         };
-        if !window.focused || cursor.grab_mode != CursorGrabMode::None || view.pending.is_some() {
+        if !window.focused
+            || cursor.grab_mode != CursorGrabMode::None
+            || view.pending.is_some()
+            || view.paste.locks_preview()
+        {
             continue;
         }
         let moving = view.preview.as_ref().is_some_and(|preview| preview.moving);

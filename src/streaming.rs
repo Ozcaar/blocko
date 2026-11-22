@@ -50,10 +50,14 @@ pub struct Stream {
 
 impl Stream {
     pub fn new(source: JavaWorld, root: Entity) -> Self {
+        Self::from_source(Arc::new(source), root)
+    }
+
+    fn from_source(source: Arc<JavaWorld>, root: Entity) -> Self {
         Self {
             name: source.name.clone(),
             root,
-            source: Arc::new(source),
+            source,
             center: None,
             priority: Vec::new(),
             loaded: HashMap::new(),
@@ -64,6 +68,11 @@ impl Stream {
             meshes: HashMap::new(),
             preview: None,
         }
+    }
+
+    pub fn reload(&mut self, commands: &mut Commands) {
+        commands.entity(self.root).despawn_children();
+        *self = Self::from_source(self.source.clone(), self.root);
     }
 
     pub fn status(&self) -> (usize, usize, usize, bool) {
