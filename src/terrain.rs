@@ -2,6 +2,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::ImageSampler,
     mesh::Indices,
+    pbr::{DistanceFog, FogFalloff},
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
@@ -11,8 +12,40 @@ use crate::world::{BlockState, Chunk, Section};
 const FIRST_SECTION: i32 = -4;
 const SECTION_COUNT: usize = 24;
 const TILE_SIZE: u32 = 16;
-const ATLAS_COLUMNS: u32 = 8;
-const ATLAS_ROWS: u32 = 2;
+const ATLAS_COLUMNS: u32 = 6;
+const ATLAS_ROWS: u32 = 3;
+
+pub const OVERWORLD_SKY: Color = Color::srgb(0.65, 0.76, 0.84);
+
+pub fn overworld_ambient() -> AmbientLight {
+    AmbientLight {
+        color: Color::srgb(0.94, 0.97, 1.0),
+        brightness: 780.0,
+        ..default()
+    }
+}
+
+pub fn overworld_sun() -> (DirectionalLight, Transform) {
+    (
+        DirectionalLight {
+            color: Color::srgb(1.0, 0.98, 0.95),
+            illuminance: 2_900.0,
+            ..default()
+        },
+        Transform::from_xyz(-5.0, 8.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+    )
+}
+
+pub fn overworld_fog() -> DistanceFog {
+    DistanceFog {
+        color: OVERWORLD_SKY,
+        falloff: FogFalloff::Linear {
+            start: 64.0,
+            end: 102.0,
+        },
+        ..default()
+    }
+}
 
 pub fn terrain_material(images: &mut Assets<Image>) -> StandardMaterial {
     let width = TILE_SIZE * ATLAS_COLUMNS;
@@ -63,10 +96,12 @@ enum Tile {
     Bricks,
     Cobble,
     Sand,
+    Snow,
+    SnowEdge,
 }
 
 impl Tile {
-    const ALL: [Self; 16] = [
+    const ALL: [Self; (ATLAS_COLUMNS * ATLAS_ROWS) as usize] = [
         Self::Grain,
         Self::Rock,
         Self::Grass,
@@ -83,6 +118,8 @@ impl Tile {
         Self::Bricks,
         Self::Cobble,
         Self::Sand,
+        Self::Snow,
+        Self::SnowEdge,
     ];
 
     fn pixel(self, x: u32, y: u32) -> [u8; 4] {
@@ -98,18 +135,21 @@ impl Tile {
         match self {
             Self::Grain => gray(220 + grain),
             Self::Rock => gray(193 + grain + noise(x / 3, y / 3) as u8),
-            Self::Grass => gray(186 + grain + noise(x / 2, y / 2) as u8),
+            Self::Grass => gray(193 + grain / 2 + noise(x / 2, y / 2) as u8),
             Self::GrassEdge if y <= 2 + noise(x, 0) % 4 => {
-                [70 + grain / 2, 128 + grain, 44 + grain / 3, 255]
+                [84 + grain / 2, 128 + grain, 51 + grain / 3, 255]
             }
-            Self::GrassEdge => [110 + grain, 76 + grain / 2, 48 + grain / 2, 255],
+            Self::SnowEdge if y <= 2 + noise(x, 0) % 4 => {
+                [220 + grain / 2, 233 + grain / 2, 243 + grain / 3, 255]
+            }
+            Self::GrassEdge | Self::SnowEdge => [110 + grain, 76 + grain / 2, 48 + grain / 2, 255],
             Self::Dirt => gray(184 + grain * 2),
             Self::Water => {
-                let ripple = (x + y * 3 + noise(0, y) / 7) % 16;
-                gray(if y % 5 == 1 && ripple < 7 {
-                    253
+                let ripple = (x + noise(0, y) / 2) % TILE_SIZE;
+                gray(if y % 4 == 1 && ripple < 10 {
+                    235 + grain / 2
                 } else {
-                    204 + grain / 2
+                    211 + noise(x / 4, y / 2) as u8 / 2 + grain / 4
                 })
             }
             Self::Bark => gray(126 + noise(x / 2, y / 7) as u8 * 3 + grain),
@@ -124,7 +164,7 @@ impl Tile {
             Self::Planks if y % 4 == 0 || (x + y / 4 * 5) % 16 == 0 => gray(151 + grain),
             Self::Planks => gray(196 + noise(x / 5, y) as u8 + grain / 2),
             Self::Leaves if noise(x / 2, y / 2) < 4 && grain < 19 => [0; 4],
-            Self::Leaves => gray(178 + noise(x / 2, y / 2) as u8 + grain),
+            Self::Leaves => gray(189 + noise(x / 2, y / 2) as u8 + grain / 2),
             Self::GrassBlades => {
                 let main = (x as i32 - (7 + y as i32 / 7)).abs() <= 1 && y > 2;
                 let left = (x as i32 - (1 + y as i32 / 3)).abs() <= 1 && y > 7;
@@ -155,6 +195,7 @@ impl Tile {
                 }
             }
             Self::Sand => gray(225 + grain / 2 + noise(x / 4, y / 4) as u8 / 3),
+            Self::Snow => gray(229 + grain / 3 + noise(x / 4, y / 4) as u8 / 3),
         }
     }
 
@@ -293,18 +334,23 @@ fn block_visual(state: &BlockState) -> Visual {
     let mut visual = match name {
         "air" | "cave_air" | "void_air" | "structure_void" | "light" | "barrier" => Visual::EMPTY,
         "grass_block" | "podzol" | "mycelium" => {
-            let top = match name {
-                "podzol" => [128, 103, 63],
-                "mycelium" => [136, 109, 132],
-                _ => [113, 170, 69],
-            };
             let mut grass = cube(Dirt, [154, 109, 72]);
-            grass.top = Texture::new(Grass, top);
-            grass.side = if name == "grass_block" {
-                Texture::new(GrassEdge, [255; 3])
+            if property("snowy") == Some("true") {
+                grass.top = Texture::new(Snow, [238, 247, 254]);
+                grass.side = Texture::new(SnowEdge, [255; 3]);
             } else {
-                Texture::new(Dirt, top)
-            };
+                let top = match name {
+                    "podzol" => [128, 103, 63],
+                    "mycelium" => [136, 109, 132],
+                    _ => [121, 169, 80],
+                };
+                grass.top = Texture::new(Grass, top);
+                grass.side = if name == "grass_block" {
+                    Texture::new(GrassEdge, [255; 3])
+                } else {
+                    Texture::new(Dirt, top)
+                };
+            }
             grass
         }
         "dirt" | "coarse_dirt" | "rooted_dirt" | "farmland" | "dirt_path" => cube(
@@ -324,13 +370,19 @@ fn block_visual(state: &BlockState) -> Visual {
         "red_sand" | "red_sandstone" | "terracotta" => cube(Sand, [185, 105, 62]),
         "clay" => cube(Sand, [161, 168, 184]),
         "mud" | "packed_mud" => cube(Dirt, [104, 87, 84]),
-        "snow" | "snow_block" | "powder_snow" | "quartz_block" => cube(Sand, [242, 250, 255]),
-        "ice" | "packed_ice" | "blue_ice" => cube(Water, [159, 192, 236]),
+        "snow" | "snow_block" | "powder_snow" => {
+            let mut snow = cube(Snow, [209, 227, 242]);
+            snow.top = Texture::new(Snow, [241, 248, 253]);
+            snow
+        }
+        "quartz_block" => cube(Sand, [238, 234, 222]),
+        "ice" | "packed_ice" | "blue_ice" => cube(Snow, [146, 184, 227]),
         "water" | "bubble_column" | "kelp" | "kelp_plant" | "seagrass" | "tall_seagrass" => {
             Visual {
                 shape: Shape::Liquid,
                 surface: Surface::Water,
-                ..cube(Water, [71, 132, 209])
+                top: Texture::new(Water, [89, 148, 213]),
+                ..cube(Grain, [55, 108, 169])
             }
         }
         "lava" => Visual {
@@ -371,11 +423,11 @@ fn block_visual(state: &BlockState) -> Visual {
         },
         n if n.ends_with("_leaves") => {
             let tint = match n {
-                "spruce_leaves" => [78, 123, 83],
-                "birch_leaves" => [124, 164, 75],
+                "spruce_leaves" => [78, 126, 92],
+                "birch_leaves" => [132, 165, 86],
                 "cherry_leaves" => [240, 160, 185],
                 "dark_oak_leaves" => [71, 122, 57],
-                _ => [99, 155, 64],
+                _ => [99, 148, 74],
             };
             Visual {
                 surface: Surface::Foliage,
@@ -943,6 +995,24 @@ mod tests {
         let face_count = |chunks| mesh_chunk(&chunk, chunks).unwrap().indices().unwrap().len() / 6;
         assert_eq!(face_count([None; 4]), 6);
         assert_eq!(face_count([None, Some(&neighbor), None, None]), 5);
+    }
+
+    #[test]
+    fn uses_snow_textures_only_for_grass_with_the_snowy_property_set() {
+        let mut grass = BlockState {
+            name: "minecraft:grass_block".to_owned(),
+            properties: BTreeMap::new(),
+        };
+        assert!(matches!(block_visual(&grass).top.tile, Tile::Grass));
+
+        grass
+            .properties
+            .insert("snowy".to_owned(), "true".to_owned());
+        let snowy = block_visual(&grass);
+        assert!(matches!(snowy.top.tile, Tile::Snow));
+        assert!(matches!(snowy.side.tile, Tile::SnowEdge));
+        assert!(matches!(snowy.bottom.tile, Tile::Dirt));
+        assert!(matches!(snowy.shape, Shape::Cube));
     }
 
     #[test]
