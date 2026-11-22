@@ -40,10 +40,54 @@ impl ChunkPos {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct BlockState {
     pub name: String,
     pub properties: BTreeMap<String, String>,
+}
+
+impl BlockState {
+    pub fn is_air(&self) -> bool {
+        matches!(
+            self.name.as_str(),
+            "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChestItem {
+    pub slot: u8,
+    pub id: String,
+    pub count: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignText {
+    pub messages: [String; 4],
+    pub filtered_messages: Option<[String; 4]>,
+    pub color: String,
+    pub glowing: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BlockEntity {
+    Chest {
+        items: Vec<ChestItem>,
+        custom_name: Option<String>,
+        lock: Option<String>,
+    },
+    Sign {
+        front: SignText,
+        back: SignText,
+        waxed: bool,
+    },
+}
+
+#[derive(Debug)]
+pub enum BlockEntityRecord {
+    Supported(BlockEntity),
+    Unsupported { kind: String, reason: String },
 }
 
 #[derive(Debug)]
@@ -52,9 +96,11 @@ pub struct Section {
     pub blocks: Box<[u16; 4096]>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Chunk {
     pub sections: BTreeMap<i32, Section>,
+    pub block_entities: BTreeMap<[i32; 3], BlockEntityRecord>,
+    pub block_entity_error: Option<String>,
 }
 
 impl Chunk {

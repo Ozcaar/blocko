@@ -4,6 +4,8 @@ use bevy_egui::{EguiContext, EguiFullOutput, EguiInput, egui};
 use crate::{
     editor::{self, DemoSelection, Destination, Overlay, PendingOpen, SceneAssets, View},
     flight::Flight,
+    selection::Selection,
+    structure::{Clipboard, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y, Volume},
 };
 
 const BAR: egui::Color32 = egui::Color32::from_rgb(20, 27, 32);
@@ -18,7 +20,7 @@ pub fn context() -> EguiContext {
     let mut context = EguiContext::default();
     let mut visuals = egui::Visuals::dark();
     visuals.widgets.inactive.bg_fill = PANEL;
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LINE);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, LINE);
     visuals.widgets.hovered.bg_fill = LINE;
     visuals.selection.bg_fill = egui::Color32::from_rgb(29, 95, 74);
     visuals.override_text_color = Some(TEXT);
@@ -37,6 +39,7 @@ pub fn draw(
     )>,
     mut cameras: Query<(&mut Camera, &Transform), With<Flight>>,
     mut demo_selection: ResMut<DemoSelection>,
+    mut clipboard: ResMut<Clipboard>,
     assets: Res<SceneAssets>,
 ) {
     let mut demo_requested = false;
@@ -47,16 +50,19 @@ pub fn draw(
         let Ok((mut camera, transform)) = cameras.get_mut(view.camera) else {
             continue;
         };
-        let mut open = None;
+        let mut actions = WindowActions::default();
         let mut viewport = None;
         **output = Some(egui.get_mut().run(input.take(), |ctx| {
-            open = window_ui(
+            let requested = window_ui(
                 ctx,
-                &view,
+                &mut view,
                 transform.translation,
                 &mut demo_selection,
                 &mut demo_requested,
+                &clipboard,
             );
+            actions.open = actions.open.or(requested.open);
+            actions.copy = actions.copy.or(requested.copy);
             viewport = Some((ctx.available_rect(), ctx.pixels_per_point()));
         }));
         if let Some((rect, pixels_per_point)) = viewport {
@@ -76,9 +82,18 @@ pub fn draw(
                 });
             }
         }
-        if let Some(destination) = open {
+        if let Some(destination) = actions.open {
             view.error = None;
             view.pending = Some(PendingOpen::browse(destination));
+        } else if let (Some(volume), Some(stream)) = (actions.copy, &view.stream) {
+            let source = stream.source();
+            match clipboard.request(overlay.0, source, volume) {
+                Ok(()) => {
+                    view.copying = true;
+                    view.copy_notice = None;
+                }
+                Err(error) => view.copy_notice = Some(format!("{error:#}")),
+            }
         }
     }
     if demo_requested {
@@ -103,14 +118,21 @@ fn frame(fill: egui::Color32) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(16, 10))
 }
 
+#[derive(Default)]
+struct WindowActions {
+    open: Option<Destination>,
+    copy: Option<Volume>,
+}
+
 fn window_ui(
     ctx: &egui::Context,
-    view: &View,
+    view: &mut View,
     position: Vec3,
-    selection: &mut DemoSelection,
+    demo_selection: &mut DemoSelection,
     demo_requested: &mut bool,
-) -> Option<Destination> {
-    let mut open = None;
+    clipboard: &Clipboard,
+) -> WindowActions {
+    let mut actions = WindowActions::default();
     let busy = view.pending.is_some();
     let name = view.stream.as_ref().map(|stream| stream.name.as_str());
     egui::TopBottomPanel::top("barra")
@@ -139,13 +161,13 @@ fn window_ui(
                     )
                     .clicked()
                 {
-                    open = Some(Destination::Current);
+                    actions.open = Some(Destination::Current);
                 }
                 if ui
                     .add_enabled(!busy, egui::Button::new("Abrir en otra ventana…"))
                     .clicked()
                 {
-                    open = Some(Destination::NewWindow);
+                    actions.open = Some(Destination::NewWindow);
                 }
                 if busy {
                     ui.spinner();
@@ -220,29 +242,204 @@ fn window_ui(
                     ui.add_space(8.0);
                     ui.label(egui::RichText::new(error).color(ALERT));
                 }
+                panel_heading(ui, "Portapapeles compartido");
+                clipboard_contents(ui, clipboard);
+                if name.is_some() {
+                    panel_heading(ui, "Selección 3D");
+                    actions.copy = selection_controls(
+                        ui,
+                        &mut view.selection,
+                        position,
+                        busy,
+                        clipboard.copying(),
+                    );
+                    if view.copying {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("Copiando…").color(MUTED));
+                        });
+                    }
+                    if let Some(notice) = &view.copy_notice {
+                        ui.label(egui::RichText::new(notice).color(MUTED));
+                    }
+                }
                 if name.is_some() || view.demo_scene.is_some() {
-                    ui.add_space(15.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Cámara libre").strong());
+                    panel_heading(ui, "Cámara libre");
                     ui.label(egui::RichText::new("Botón derecho + ratón para mirar").color(MUTED));
                     ui.label(egui::RichText::new("WASD para moverte").color(MUTED));
                     ui.label(egui::RichText::new("Espacio / Ctrl para subir y bajar").color(MUTED));
                     ui.label(egui::RichText::new("Mayús para acelerar").color(MUTED));
                 }
                 if view.demo_scene.is_some() {
-                    ui.add_space(15.0);
-                    ui.separator();
-                    ui.label(egui::RichText::new("Prueba de ventanas").strong());
+                    panel_heading(ui, "Prueba de ventanas");
                     if ui.button("Otra ventana de prueba").clicked() {
                         *demo_requested = true;
                     }
                     if ui.button("Compartir selección ficticia").clicked() {
-                        selection.0 = Some(format!("Volumen 3 × 2 × 3 · ventana {}", view.layer));
+                        demo_selection.0 =
+                            Some(format!("Volumen 3 × 2 × 3 · ventana {}", view.layer));
                     }
-                    ui.label(selection.0.as_deref().unwrap_or("Sin selección compartida"));
+                    ui.label(
+                        demo_selection
+                            .0
+                            .as_deref()
+                            .unwrap_or("Sin selección compartida"),
+                    );
                 }
             });
         });
-    open
+    actions
+}
+
+fn panel_heading(ui: &mut egui::Ui, label: &str) {
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(5.0);
+    ui.label(egui::RichText::new(label).strong());
+}
+
+fn clipboard_contents(ui: &mut egui::Ui, clipboard: &Clipboard) {
+    if let Some(structure) = &clipboard.current {
+        let [x, y, z] = structure.volume.dimensions();
+        ui.label(egui::RichText::new(&structure.source_name).color(ACCENT));
+        ui.monospace(format!("{x} × {y} × {z}"));
+        let blocks = structure.block_count();
+        ui.label(egui::RichText::new(format!("{blocks} bloques, incluido el aire")).color(MUTED));
+        let entities = structure.block_entity_count();
+        if entities != 0 {
+            ui.label(egui::RichText::new(format!("{entities} entidades de bloque")).color(MUTED));
+        }
+    } else if !clipboard.copying() {
+        ui.label(egui::RichText::new("Sin copia en esta sesión").color(MUTED));
+    }
+    if clipboard.copying() {
+        ui.label(egui::RichText::new("Preparando una copia…").color(MUTED));
+    }
+}
+
+fn selection_controls(
+    ui: &mut egui::Ui,
+    selection: &mut Selection,
+    position: Vec3,
+    opening: bool,
+    copying: bool,
+) -> Option<Volume> {
+    ui.add_enabled_ui(!opening, |ui| {
+        if ui.button("Marcar A y B en el visor").clicked() {
+            arm_pick(selection, 0, true);
+        }
+        if let Some(corner) = selection.picking {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Haz clic sobre un bloque para marcar la esquina {}.",
+                    corner_name(corner)
+                ))
+                .color(ACCENT),
+            );
+            if ui.small_button("Cancelar marca").clicked() {
+                selection.picking = None;
+                selection.pick_b_after_a = false;
+                selection.notice = None;
+            }
+        }
+        if let Some(notice) = &selection.notice {
+            ui.label(egui::RichText::new(notice).color(ALERT));
+        }
+
+        for corner in 0..2 {
+            ui.push_id(corner, |ui| {
+                corner_controls(ui, selection, corner, position)
+            });
+        }
+
+        if selection.corners.iter().any(Option::is_some)
+            && ui.small_button("Limpiar selección").clicked()
+        {
+            *selection = Selection::default();
+        }
+
+        let volume = selection.volume()?;
+        let [x, y, z] = volume.dimensions();
+        ui.monospace(format!("{x} × {y} × {z} bloques"));
+        if let Err(error) = volume.validate() {
+            ui.label(egui::RichText::new(format!("{error:#}")).color(ALERT));
+            return None;
+        }
+        ui.add_enabled(
+            !copying && selection.picking.is_none(),
+            egui::Button::new("Copiar volumen"),
+        )
+        .clicked()
+        .then_some(volume)
+    })
+    .inner
+}
+
+const COORDINATE_LIMITS: [(i32, i32); 3] = [
+    (MIN_HORIZONTAL, MAX_HORIZONTAL),
+    (MIN_Y, MAX_Y),
+    (MIN_HORIZONTAL, MAX_HORIZONTAL),
+];
+
+fn corner_controls(ui: &mut egui::Ui, selection: &mut Selection, corner: usize, position: Vec3) {
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(format!("Esquina {}", corner_name(corner)));
+        if ui
+            .small_button("Marcar")
+            .on_hover_text("Marcar esta esquina en el visor")
+            .clicked()
+        {
+            arm_pick(selection, corner, false);
+        }
+    });
+    if let Some(coords) = &mut selection.corners[corner] {
+        let changed = egui::Grid::new("coordenadas_esquina")
+            .show(ui, |ui| {
+                let mut changed = false;
+                for (axis, ((min, max), coordinate)) in ["X", "Y", "Z"]
+                    .into_iter()
+                    .zip(COORDINATE_LIMITS.into_iter().zip(coords))
+                {
+                    ui.monospace(axis);
+                    changed |= ui
+                        .add_sized(
+                            [82.0, ui.spacing().interact_size.y],
+                            egui::DragValue::new(coordinate)
+                                .range(min..=max)
+                                .update_while_editing(false),
+                        )
+                        .changed();
+                    ui.end_row();
+                }
+                changed
+            })
+            .inner;
+        if changed {
+            selection.picking = None;
+            selection.pick_b_after_a = false;
+            selection.notice = None;
+        }
+    } else if ui.small_button("Editar coordenadas").clicked() {
+        let near_camera = position.floor().as_ivec3().to_array();
+        selection.corners[corner] = Some(selection.corners[1 - corner].unwrap_or_else(|| {
+            std::array::from_fn(|axis| {
+                let (min, max) = COORDINATE_LIMITS[axis];
+                near_camera[axis].clamp(min, max)
+            })
+        }));
+        selection.picking = None;
+        selection.pick_b_after_a = false;
+        selection.notice = None;
+    }
+}
+
+fn corner_name(corner: usize) -> &'static str {
+    ["A", "B"][corner]
+}
+
+fn arm_pick(selection: &mut Selection, corner: usize, then_b: bool) {
+    selection.picking = Some(corner);
+    selection.pick_b_after_a = then_b;
+    selection.notice = None;
 }

@@ -932,6 +932,7 @@ mod tests {
             .collect();
         Chunk {
             sections: BTreeMap::from([(0, Section { palette, blocks })]),
+            ..default()
         }
     }
 

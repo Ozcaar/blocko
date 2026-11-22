@@ -57,6 +57,14 @@ impl Stream {
         (visible, self.absent.len(), self.errors.len(), busy)
     }
 
+    pub fn source(&self) -> Arc<JavaWorld> {
+        Arc::clone(&self.source)
+    }
+
+    pub fn loaded_chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.loaded.get(&pos).map(Arc::as_ref)
+    }
+
     pub fn first_error(&self) -> Option<&str> {
         self.priority
             .iter()

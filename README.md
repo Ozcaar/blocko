@@ -64,6 +64,15 @@ Compare-Object $antes (Get-InventarioBlocko)
 
 Si los inventarios coinciden, `Compare-Object` no imprime nada. Para probar las cámaras y el estado compartido con dos escenas pequeñas, ejecuta `cargo run -- --demo` y usa **Otra ventana de prueba** y **Compartir selección ficticia**.
 
+## Comprobar BLCK-2
+
+1. Abre una copia de Bosque en Java 1.21.1. En **Selección 3D**, pulsa **Marcar A y B en el visor** y haz clic sobre dos bloques en esquinas opuestas de la construcción. Pulsa **Esc** para cancelar una marca pendiente.
+2. Ajusta los campos **X**, **Y** y **Z** de cada esquina para incluir los cimientos y el techo. También puedes iniciar una esquina con **Editar coordenadas**. El contorno y las dimensiones incluyen los bloques de ambas esquinas.
+3. Pulsa **Copiar volumen**. Comprueba el nombre y las dimensiones bajo **Portapapeles compartido**. El volumen conserva los bloques de aire, las propiedades de los bloques, el inventario de cofres simples y el texto de ambas caras de los carteles.
+4. Abre Pradera en otra ventana y comprueba que aparece la misma copia. Reemplaza el mundo de la primera ventana o ciérrala. La otra ventana conserva su cámara, su selección y el portapapeles compartido. Copia otro volumen desde Pradera y comprueba que reemplaza la copia anterior.
+
+Una selección de hasta 1 048 576 bloques se copia en segundo plano. Si cruza chunks sin generar o contiene datos incompatibles, Blocko indica el problema y conserva la última copia exitosa. El portapapeles pertenece a la sesión de Blocko.
+
 ## Alcance del visor
 
 Los chunks completos del Overworld se leen bajo demanda y se mallan en segundo plano. El lector usa `fastnbt` para interpretar NBT y transmite al modelo interno las paletas y propiedades de bloques. El visor aproxima las formas y texturas con mallas por chunk y un atlas original. Algunas formas, materiales y efectos de Minecraft se simplifican. La cámara es libre y atraviesa la geometría.

@@ -1,7 +1,9 @@
 mod editor;
 mod flight;
 mod java;
+mod selection;
 mod streaming;
+mod structure;
 mod terrain;
 mod ui;
 mod world;

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs::{self, File, TryLockError},
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -7,12 +7,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use fastnbt::LongArray;
+use fastnbt::{LongArray, Value};
 use flate2::read::{GzDecoder, ZlibDecoder};
 use lz4_java_wrc::Lz4BlockInput;
 use serde::Deserialize;
 
-use crate::world::{BlockState, Chunk, ChunkPos, Section};
+use crate::world::{
+    BlockEntity, BlockEntityRecord, BlockState, ChestItem, Chunk, ChunkPos, Section, SignText,
+};
 
 const JAVA_1_21_1: i32 = 3955;
 const FIRST_FLAT_CHUNK_VERSION: i32 = 2860;
@@ -344,6 +346,7 @@ struct JavaChunk {
     #[serde(rename = "Status")]
     status: String,
     sections: Option<Vec<JavaSection>>,
+    block_entities: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -412,7 +415,296 @@ fn decode_chunk(nbt: &[u8], pos: ChunkPos) -> Result<Option<Chunk>> {
             entry.y
         );
     }
-    Ok(Some(Chunk { sections }))
+    let mut decoded = Chunk {
+        sections,
+        ..Chunk::default()
+    };
+    read_block_entities(&mut decoded, pos, chunk.block_entities);
+    Ok(Some(decoded))
+}
+
+type Compound = HashMap<String, Value>;
+
+fn read_block_entities(chunk: &mut Chunk, owner: ChunkPos, data: Option<Value>) {
+    let Some(data) = data else {
+        return;
+    };
+    let Value::List(entities) = data else {
+        chunk.block_entity_error = Some("La lista de entidades de bloque es inválida".into());
+        return;
+    };
+
+    for entity in entities {
+        let Some((coordinates, tags)) = coordinates_and_tags(&entity, owner) else {
+            chunk.block_entity_error.get_or_insert_with(|| {
+                "Hay una entidad de bloque sin coordenadas válidas dentro del chunk".into()
+            });
+            continue;
+        };
+        let kind = match tags.get("id") {
+            Some(Value::String(id)) if !id.is_empty() => id.as_str(),
+            _ => "entidad sin identificador",
+        };
+        let [x, y, z] = coordinates;
+        let block = chunk.block(x.rem_euclid(16), y, z.rem_euclid(16));
+        let record = match decode_block_entity(kind, tags, block) {
+            Ok(entity) => BlockEntityRecord::Supported(entity),
+            Err(error) => BlockEntityRecord::Unsupported {
+                kind: kind.into(),
+                reason: format!("{error:#}"),
+            },
+        };
+        match chunk.block_entities.entry(coordinates) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(record);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.insert(BlockEntityRecord::Unsupported {
+                    kind: kind.into(),
+                    reason: "Hay varias entidades de bloque en la misma posición".into(),
+                });
+            }
+        }
+    }
+}
+
+fn coordinates_and_tags(data: &Value, owner: ChunkPos) -> Option<([i32; 3], &Compound)> {
+    let Value::Compound(tags) = data else {
+        return None;
+    };
+    let (Some(&Value::Int(x)), Some(&Value::Int(y)), Some(&Value::Int(z))) =
+        (tags.get("x"), tags.get("y"), tags.get("z"))
+    else {
+        return None;
+    };
+    (ChunkPos::from_block(x, z) == owner && (-64..=319).contains(&y)).then_some(([x, y, z], tags))
+}
+
+fn decode_block_entity(
+    kind: &str,
+    tags: &Compound,
+    block: Option<&BlockState>,
+) -> Result<BlockEntity> {
+    let payload = match kind {
+        "minecraft:chest" => ["Items", "CustomName", "Lock"].as_slice(),
+        "minecraft:sign" | "minecraft:hanging_sign" => {
+            ["front_text", "back_text", "is_waxed"].as_slice()
+        }
+        _ => bail!("Este tipo de entidad de bloque no se puede copiar"),
+    };
+    if kind == "minecraft:chest" {
+        ensure!(
+            !tags.contains_key("LootTable") && !tags.contains_key("LootTableSeed"),
+            "El cofre contiene una tabla de botín pendiente"
+        );
+    }
+    ensure!(
+        empty_components(tags),
+        "La entidad de bloque tiene componentes adicionales"
+    );
+    // Anvil uses this flag to defer instantiation. The persisted entity still
+    // has its entire payload, which is validated below before it is copied.
+    optional_boolean(tags, "keepPacked")?;
+    check_fields(
+        tags,
+        payload,
+        &["id", "x", "y", "z", "keepPacked", "components"],
+    )?;
+
+    let block = block.context("La entidad no corresponde a un bloque en el chunk")?;
+    if kind == "minecraft:chest" {
+        ensure!(
+            block.name == kind
+                && matches!(
+                    block.properties.get("type").map(String::as_str),
+                    None | Some("single")
+                ),
+            "Solo se pueden copiar cofres simples"
+        );
+        return Ok(BlockEntity::Chest {
+            items: chest_items(tags.get("Items"))?,
+            custom_name: optional_string(tags, "CustomName")?,
+            lock: optional_string(tags, "Lock")?,
+        });
+    }
+
+    let is_hanging = block.name.ends_with("_hanging_sign");
+    ensure!(
+        block.name.starts_with("minecraft:")
+            && block.name.ends_with("_sign")
+            && (kind == "minecraft:hanging_sign") == is_hanging,
+        "La entidad del cartel no corresponde al bloque"
+    );
+    Ok(BlockEntity::Sign {
+        front: sign_face(tags.get("front_text")).context("Texto del frente del cartel")?,
+        back: sign_face(tags.get("back_text")).context("Texto del reverso del cartel")?,
+        waxed: optional_boolean(tags, "is_waxed")?,
+    })
+}
+
+fn chest_items(data: Option<&Value>) -> Result<Vec<ChestItem>> {
+    let Some(data) = data else {
+        return Ok(Vec::new());
+    };
+    let Value::List(entries) = data else {
+        bail!("El inventario del cofre no es una lista");
+    };
+    let mut used_slots = [false; 27];
+    let mut items = Vec::with_capacity(entries.len().min(27));
+    for entry in entries {
+        let Value::Compound(tags) = entry else {
+            bail!("El inventario contiene un objeto inválido");
+        };
+        let Some(&Value::Byte(slot)) = tags.get("Slot") else {
+            bail!("Un objeto del cofre no tiene una ranura válida");
+        };
+        let slot = u8::try_from(slot).context("Ranura de cofre fuera de rango")?;
+        let used = used_slots
+            .get_mut(usize::from(slot))
+            .context("Ranura de cofre fuera de rango")?;
+        ensure!(!*used, "Hay varios objetos en la ranura {slot}");
+        *used = true;
+
+        ensure!(
+            empty_components(tags),
+            "El objeto en la ranura {slot} tiene componentes adicionales"
+        );
+        check_fields(tags, &["Slot", "id", "count", "components"], &[])
+            .with_context(|| format!("Objeto en la ranura {slot}"))?;
+        let id = optional_string(tags, "id")?
+            .context("Falta el identificador de un objeto del cofre")?;
+        ensure!(
+            is_vanilla_item_id(&id),
+            "Identificador de objeto no compatible: {id}"
+        );
+        let count = match tags.get("count") {
+            None => 1,
+            Some(&Value::Byte(n)) => i32::from(n),
+            Some(&Value::Short(n)) => i32::from(n),
+            Some(&Value::Int(n)) => n,
+            _ => bail!("Cantidad inválida en la ranura {slot}"),
+        };
+        ensure!(
+            (1..=99).contains(&count),
+            "Cantidad fuera de rango en la ranura {slot}"
+        );
+        items.push(ChestItem { slot, id, count });
+    }
+    Ok(items)
+}
+
+fn is_vanilla_item_id(id: &str) -> bool {
+    id.strip_prefix("minecraft:").is_some_and(|path| {
+        !path.is_empty()
+            && path != "air"
+            && path
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"_-./".contains(&c))
+    })
+}
+
+fn sign_face(data: Option<&Value>) -> Result<SignText> {
+    let Some(data) = data else {
+        return Ok(SignText {
+            messages: std::array::from_fn(|_| "\"\"".into()),
+            filtered_messages: None,
+            color: "black".into(),
+            glowing: false,
+        });
+    };
+    let Value::Compound(tags) = data else {
+        bail!("La cara del cartel tiene un formato inválido");
+    };
+    check_fields(
+        tags,
+        &["messages", "filtered_messages", "color", "has_glowing_text"],
+        &[],
+    )?;
+    let color = optional_string(tags, "color")?.unwrap_or_else(|| "black".into());
+    ensure!(
+        matches!(
+            color.as_str(),
+            "white"
+                | "orange"
+                | "magenta"
+                | "light_blue"
+                | "yellow"
+                | "lime"
+                | "pink"
+                | "gray"
+                | "light_gray"
+                | "cyan"
+                | "purple"
+                | "blue"
+                | "brown"
+                | "green"
+                | "red"
+                | "black"
+        ),
+        "Color de cartel no compatible: {color}"
+    );
+    Ok(SignText {
+        messages: sign_lines(tags.get("messages")).context("Mensajes del cartel")?,
+        filtered_messages: tags
+            .get("filtered_messages")
+            .map(|list| sign_lines(Some(list)))
+            .transpose()
+            .context("Mensajes filtrados del cartel")?,
+        color,
+        glowing: optional_boolean(tags, "has_glowing_text")?,
+    })
+}
+
+fn sign_lines(data: Option<&Value>) -> Result<[String; 4]> {
+    let Some(Value::List(lines)) = data else {
+        bail!("Los mensajes deben ser una lista");
+    };
+    let [
+        Value::String(a),
+        Value::String(b),
+        Value::String(c),
+        Value::String(d),
+    ] = lines.as_slice()
+    else {
+        bail!("El cartel debe contener cuatro líneas de texto JSON");
+    };
+    Ok([a.clone(), b.clone(), c.clone(), d.clone()])
+}
+
+fn check_fields(tags: &Compound, payload: &[&str], metadata: &[&str]) -> Result<()> {
+    if let Some(field) = tags
+        .keys()
+        .map(String::as_str)
+        .filter(|field| !payload.contains(field) && !metadata.contains(field))
+        .min()
+    {
+        bail!("Campo no compatible: {field}");
+    }
+    Ok(())
+}
+
+fn empty_components(tags: &Compound) -> bool {
+    match tags.get("components") {
+        None => true,
+        Some(Value::Compound(components)) => components.is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn optional_string(tags: &Compound, key: &str) -> Result<Option<String>> {
+    match tags.get(key) {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => bail!("El campo {key} debe ser texto"),
+    }
+}
+
+fn optional_boolean(tags: &Compound, key: &str) -> Result<bool> {
+    match tags.get(key) {
+        None | Some(Value::Byte(0)) => Ok(false),
+        Some(Value::Byte(1)) => Ok(true),
+        Some(_) => bail!("El campo {key} debe ser verdadero o falso"),
+    }
 }
 
 fn unpack_indices(palette_len: usize, data: Option<&[i64]>) -> Result<Box<[u16; 4096]>> {
@@ -461,7 +753,6 @@ fn is_air(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fastnbt::Value;
     use flate2::{
         Compression,
         write::{GzEncoder, ZlibEncoder},
@@ -497,13 +788,23 @@ mod tests {
     }
 
     fn chunk_nbt(pos: ChunkPos) -> Result<Vec<u8>> {
-        let palette = Value::List(vec![compound([
-            ("Name", Value::String("minecraft:oak_log".into())),
-            (
-                "Properties",
-                compound([("axis", Value::String("x".into()))]),
-            ),
-        ])]);
+        let block = compound([
+            ("Name", string("minecraft:oak_log")),
+            ("Properties", compound([("axis", string("x"))])),
+        ]);
+        chunk_nbt_with_entities(pos, block, Vec::new())
+    }
+
+    fn string(value: &str) -> Value {
+        Value::String(value.into())
+    }
+
+    fn chunk_nbt_with_entities(
+        pos: ChunkPos,
+        block: Value,
+        block_entities: Vec<Value>,
+    ) -> Result<Vec<u8>> {
+        let palette = Value::List(vec![block]);
         let sections = Value::List(vec![compound([
             ("Y", Value::Byte(-4)),
             ("block_states", compound([("palette", palette)])),
@@ -514,6 +815,7 @@ mod tests {
             ("zPos", Value::Int(pos.z)),
             ("Status", Value::String("minecraft:full".into())),
             ("sections", sections),
+            ("block_entities", Value::List(block_entities)),
         ]);
         Ok(fastnbt::to_bytes(&nbt)?)
     }
@@ -530,6 +832,181 @@ mod tests {
         assert_eq!(block.properties["axis"], "x");
         assert!(chunk.block(15, -48, 15).is_none());
         assert!(decode_chunk(&bytes, ChunkPos { x: -1, ..pos }).is_err());
+        Ok(())
+    }
+
+    fn entity(
+        kind: &str,
+        x: i32,
+        payload: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> Value {
+        let entries = [
+            ("id", string(kind)),
+            ("x", Value::Int(x)),
+            ("y", Value::Int(-49)),
+            ("z", Value::Int(-48)),
+        ];
+        Value::Compound(
+            entries
+                .into_iter()
+                .chain(payload)
+                .map(|(key, value)| (key.into(), value))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn preserves_simple_chest_metadata_and_inventory() -> Result<()> {
+        let pos = ChunkPos { x: -2, z: -3 };
+        let block = compound([
+            ("Name", string("minecraft:chest")),
+            ("Properties", compound([("type", string("single"))])),
+        ]);
+        let items = Value::List(vec![
+            compound([
+                ("Slot", Value::Byte(0)),
+                ("id", string("minecraft:stone")),
+                ("count", Value::Int(17)),
+            ]),
+            compound([
+                ("Slot", Value::Byte(26)),
+                ("id", string("minecraft:diamond")),
+            ]),
+        ]);
+        let name = r#"{"text": "Materiales", "color":"gold"}"#;
+        let tags = [
+            ("Items", items),
+            ("CustomName", string(name)),
+            ("Lock", string("Llave")),
+            ("components", Value::Compound(HashMap::new())),
+            ("keepPacked", Value::Byte(1)),
+        ];
+        let bytes =
+            chunk_nbt_with_entities(pos, block, vec![entity("minecraft:chest", -32, tags)])?;
+        let chunk = decode_chunk(&bytes, pos)?.context("Chunk ausente en la prueba")?;
+        let Some(BlockEntityRecord::Supported(BlockEntity::Chest {
+            items,
+            custom_name,
+            lock,
+        })) = chunk.block_entities.get(&[-32, -49, -48])
+        else {
+            bail!("No se leyó el cofre de prueba: {:?}", chunk.block_entities);
+        };
+        assert_eq!(
+            items,
+            &[
+                ChestItem {
+                    slot: 0,
+                    id: "minecraft:stone".into(),
+                    count: 17
+                },
+                ChestItem {
+                    slot: 26,
+                    id: "minecraft:diamond".into(),
+                    count: 1
+                },
+            ]
+        );
+        assert_eq!(custom_name.as_deref(), Some(name));
+        assert_eq!(lock.as_deref(), Some("Llave"));
+        assert!(chunk.block_entity_error.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_exact_json_on_both_faces_of_a_sign() -> Result<()> {
+        let pos = ChunkPos { x: -2, z: -3 };
+        let block = compound([("Name", string("minecraft:oak_wall_sign"))]);
+        let front_line = r#"{"text": "Entrada", "bold":true}"#;
+        let back_line = r#""Salida""#;
+        let filtered_line = r#""******""#;
+        let lines = |line| {
+            Value::List(vec![
+                string(line),
+                string(r#""""#),
+                string(r#""""#),
+                string(r#""""#),
+            ])
+        };
+        let tags = [
+            (
+                "front_text",
+                compound([
+                    ("messages", lines(front_line)),
+                    ("filtered_messages", lines(filtered_line)),
+                    ("color", string("red")),
+                    ("has_glowing_text", Value::Byte(1)),
+                ]),
+            ),
+            ("back_text", compound([("messages", lines(back_line))])),
+            ("is_waxed", Value::Byte(1)),
+        ];
+        let bytes = chunk_nbt_with_entities(pos, block, vec![entity("minecraft:sign", -32, tags)])?;
+        let chunk = decode_chunk(&bytes, pos)?.context("Chunk ausente en la prueba")?;
+        let Some(BlockEntityRecord::Supported(BlockEntity::Sign { front, back, waxed })) =
+            chunk.block_entities.get(&[-32, -49, -48])
+        else {
+            bail!("No se leyó el cartel de prueba: {:?}", chunk.block_entities);
+        };
+        assert_eq!(front.messages, [front_line, "\"\"", "\"\"", "\"\""]);
+        assert_eq!(front.filtered_messages.as_ref().unwrap()[0], filtered_line);
+        assert_eq!(front.color, "red");
+        assert!(front.glowing);
+        assert_eq!(back.messages[0], back_line);
+        assert_eq!(back.color, "black");
+        assert!(!back.glowing);
+        assert!(*waxed);
+        Ok(())
+    }
+
+    #[test]
+    fn retains_unsupported_records_and_terrain_for_safe_selection() -> Result<()> {
+        let pos = ChunkPos { x: -2, z: -3 };
+        let block = compound([("Name", string("minecraft:chest"))]);
+        let decorated_item = compound([
+            ("Slot", Value::Byte(4)),
+            ("id", string("minecraft:stone")),
+            (
+                "components",
+                compound([("minecraft:custom_name", string("Nombre"))]),
+            ),
+        ]);
+        let entities = vec![
+            entity("minecraft:lectern", -32, []),
+            entity(
+                "minecraft:chest",
+                -31,
+                [("LootTable", string("minecraft:test"))],
+            ),
+            entity("minecraft:chest", -30, [("Uncatalogued", Value::Int(1))]),
+            entity(
+                "minecraft:chest",
+                -29,
+                [("Items", Value::List(vec![decorated_item]))],
+            ),
+            entity("minecraft:chest", -28, []),
+            entity("minecraft:chest", -28, []),
+            entity("minecraft:chest", 16, []),
+        ];
+        let bytes = chunk_nbt_with_entities(pos, block, entities)?;
+        let chunk = decode_chunk(&bytes, pos)?.context("Chunk ausente en la prueba")?;
+        for (x, expected) in [
+            (-32, "no se puede copiar"),
+            (-31, "botín"),
+            (-30, "Uncatalogued"),
+            (-29, "componentes adicionales"),
+            (-28, "misma posición"),
+        ] {
+            let Some(BlockEntityRecord::Unsupported { reason, .. }) =
+                chunk.block_entities.get(&[x, -49, -48])
+            else {
+                bail!("No se registró como incompatible la entidad en X={x}");
+            };
+            assert!(reason.contains(expected), "{reason}");
+        }
+        assert_eq!(chunk.block_entities.len(), 5);
+        assert!(chunk.block_entity_error.is_some());
+        assert_eq!(chunk.block(0, -49, 0).unwrap().name, "minecraft:chest");
         Ok(())
     }
 

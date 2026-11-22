@@ -9,12 +9,14 @@ use bevy::{
     tasks::{IoTaskPool, Task, futures::check_ready},
     window::{CursorOptions, ExitCondition, WindowRef, WindowResolution},
 };
-use bevy_egui::{EguiContext, EguiContextSettings, EguiGlobalSettings, EguiPlugin};
+use bevy_egui::{EguiContextSettings, EguiGlobalSettings, EguiPlugin};
 
 use crate::{
     flight::{self, Flight},
     java::JavaWorld,
+    selection::{self, Selection},
     streaming::Stream,
+    structure::{self, Clipboard},
     terrain, ui,
 };
 
@@ -30,6 +32,9 @@ pub struct View {
     pub error: Option<String>,
     pub viewport: Option<Rect>,
     pub demo_scene: Option<Entity>,
+    pub selection: Selection,
+    pub copying: bool,
+    pub copy_notice: Option<String>,
 }
 
 #[derive(Component)]
@@ -107,10 +112,20 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
             ..default()
         })
         .init_resource::<DemoSelection>()
-        .add_systems(Startup, setup)
+        .init_resource::<Clipboard>()
+        .add_systems(Startup, (setup, selection::setup))
         .add_systems(
             Update,
-            (flight::fly, finish_opening, stream_worlds, ui::draw).chain(),
+            (
+                flight::fly,
+                finish_opening,
+                stream_worlds,
+                structure::finish_copying,
+                selection::pick,
+                ui::draw,
+                selection::draw,
+            )
+                .chain(),
         )
         .run();
 }
@@ -211,6 +226,9 @@ fn new_view(commands: &mut Commands, layer: usize, world_name: Option<&str>) -> 
         error: None,
         viewport: None,
         demo_scene: None,
+        selection: Selection::default(),
+        copying: false,
+        copy_notice: None,
     };
     (window, view)
 }
@@ -243,6 +261,9 @@ fn activate(commands: &mut Commands, window: Entity, view: &mut View, world: Jav
         .id();
     view.stream = Some(Stream::new(world, root));
     view.error = None;
+    view.selection = Selection::default();
+    view.copying = false;
+    view.copy_notice = None;
 }
 
 fn world_title(name: &str) -> String {
@@ -361,5 +382,197 @@ fn stream_worlds(
                 camera.translation,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use anyhow::{Context, Result, ensure};
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    fn settle(app: &mut App, mut ready: impl FnMut(&mut World) -> bool) -> Result<()> {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            app.update();
+            if ready(app.world_mut()) {
+                return Ok(());
+            }
+            ensure!(Instant::now() < until, "La operación no terminó");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn select_and_copy(app: &mut App, window: Entity) -> Result<()> {
+        app.world_mut()
+            .resource_scope(|world, mut clipboard: Mut<Clipboard>| -> Result<()> {
+                let mut view = world.get_mut::<View>(window).context("Ventana ausente")?;
+                let stream = view.stream.as_ref().context("Mundo sin cargar")?;
+                let volume = view.selection.volume().context("Selección incompleta")?;
+                clipboard.request(window, stream.source(), volume)?;
+                view.copying = true;
+                Ok(())
+            })?;
+        settle(app, |world| !world.resource::<Clipboard>().copying())?;
+        let view = app.world().get::<View>(window).unwrap();
+        ensure!(
+            view.copy_notice
+                .as_deref()
+                .is_some_and(|notice| notice.starts_with("Construcción copiada")),
+            "{}",
+            view.copy_notice.as_deref().unwrap_or("Copia sin confirmar")
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requiere BLOCKO_TEST_WORLDS con copias de Bosque y Pradera en Java 1.21.1"]
+    fn keeps_real_clipboard_and_other_view_when_replacing_or_closing_world() -> Result<()> {
+        let root =
+            PathBuf::from(std::env::var_os("BLOCKO_TEST_WORLDS").context("Faltan las copias")?);
+        let bosque_path = root.join("Bosque");
+        let pradera_path = root.join("Pradera");
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Clipboard>()
+            .add_systems(Update, (finish_opening, structure::finish_copying).chain());
+        let bosque = app
+            .world_mut()
+            .run_system_once(move |mut commands: Commands| {
+                let (window, mut view) = new_view(&mut commands, 1, None);
+                view.pending = Some(PendingOpen::start(
+                    Destination::Current,
+                    Some(bosque_path.clone()),
+                ));
+                commands.entity(window).insert(view);
+                window
+            })
+            .expect("se puede crear la ventana de prueba");
+        settle(&mut app, |world| {
+            world
+                .get::<View>(bosque)
+                .is_some_and(|view| view.pending.is_none())
+        })?;
+        let selection = [Some([14, 66, -50]), Some([17, 73, -47])];
+        app.world_mut()
+            .get_mut::<View>(bosque)
+            .unwrap()
+            .selection
+            .corners = selection;
+        select_and_copy(&mut app, bosque)?;
+        let copy = app
+            .world()
+            .resource::<Clipboard>()
+            .current
+            .as_ref()
+            .unwrap();
+        assert_eq!(copy.source_name, "Bosque");
+        assert_eq!(copy.block_count(), 128);
+        assert!(copy.block_at([0, 7, 0]).unwrap().is_air());
+
+        let chest = [Some([86, -23, 119]); 2];
+        app.world_mut()
+            .get_mut::<View>(bosque)
+            .unwrap()
+            .selection
+            .corners = chest;
+        select_and_copy(&mut app, bosque)?;
+        let copy = app
+            .world()
+            .resource::<Clipboard>()
+            .current
+            .as_ref()
+            .unwrap();
+        assert_eq!(copy.block_at([0; 3]).unwrap().properties["facing"], "east");
+        assert!(matches!(
+            copy.block_entity_at([0; 3]),
+            Some(crate::world::BlockEntity::Chest { items, .. })
+                if items.iter().any(|item| item.slot == 16 && item.id == "minecraft:diamond" && item.count == 1)
+        ));
+
+        app.world_mut().get_mut::<View>(bosque).unwrap().pending = Some(PendingOpen::start(
+            Destination::NewWindow,
+            Some(pradera_path.clone()),
+        ));
+        let mut pradera = None;
+        settle(&mut app, |world| {
+            let mut views = world.query::<(Entity, &View)>();
+            pradera = views.iter(world).find_map(|(entity, view)| {
+                (entity != bosque && view.stream.is_some()).then_some(entity)
+            });
+            pradera.is_some()
+        })?;
+        let pradera = pradera.unwrap();
+        let camera = app.world().get::<View>(pradera).unwrap().camera;
+        let position = Vec3::new(22.0, 83.0, -52.0);
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation = position;
+        app.world_mut()
+            .get_mut::<View>(pradera)
+            .unwrap()
+            .selection
+            .corners = selection;
+        assert_eq!(
+            app.world().get::<View>(bosque).unwrap().selection.corners,
+            chest
+        );
+
+        app.world_mut().get_mut::<View>(bosque).unwrap().pending =
+            Some(PendingOpen::start(Destination::Current, Some(pradera_path)));
+        settle(&mut app, |world| {
+            world
+                .get::<View>(bosque)
+                .is_some_and(|view| view.pending.is_none())
+        })?;
+        let replaced = app.world().get::<View>(bosque).unwrap();
+        assert_eq!(replaced.stream.as_ref().unwrap().name, "Pradera");
+        assert_eq!(replaced.selection.corners, [None; 2]);
+        app.world_mut().entity_mut(bosque).despawn();
+        assert_eq!(
+            app.world()
+                .resource::<Clipboard>()
+                .current
+                .as_ref()
+                .unwrap()
+                .source_name,
+            "Bosque"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Clipboard>()
+                .current
+                .as_ref()
+                .unwrap()
+                .block_entity_count(),
+            1
+        );
+        assert_eq!(
+            app.world().get::<View>(pradera).unwrap().selection.corners,
+            selection
+        );
+        assert_eq!(
+            app.world().get::<Transform>(camera).unwrap().translation,
+            position
+        );
+
+        select_and_copy(&mut app, pradera)?;
+        assert_eq!(
+            app.world()
+                .resource::<Clipboard>()
+                .current
+                .as_ref()
+                .unwrap()
+                .source_name,
+            "Pradera"
+        );
+        Ok(())
     }
 }
