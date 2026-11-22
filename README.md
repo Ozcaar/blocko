@@ -73,6 +73,13 @@ Si los inventarios coinciden, `Compare-Object` no imprime nada. Para probar las 
 
 Una selección de hasta 1 048 576 bloques se copia en segundo plano. Si cruza chunks sin generar o contiene datos incompatibles, Blocko indica el problema y conserva la última copia exitosa. El portapapeles pertenece a la sesión de Blocko.
 
+## Comprobar BLCK-3
+
+1. Copia un volumen de Bosque y abre Pradera. Pulsa **Previsualizar pegado** en la ventana de Pradera. La copia se muestra en cian y el marco ámbar delimita el volumen.
+2. Pulsa **Mover en el visor** y haz clic en una cara del terreno para fijar el origen junto a esa cara. También puedes editar **X**, **Y** y **Z** para fijar la esquina de coordenadas mínimas del volumen. **Esc** cancela el movimiento pendiente.
+3. Coloca el volumen de modo que algunos huecos de la copia coincidan con terreno. **Sin aire** conserva el terreno en esos lugares. **Con aire** muestra el espacio que se vaciaría. Ambos modos conservan la misma copia en el portapapeles.
+4. Pulsa **Cancelar vista previa** y repite la colocación. El terreno vuelve a verse como antes y el portapapeles sigue disponible. Compara los hashes de las copias con el mismo procedimiento de BLCK-1.
+
 ## Alcance del visor
 
 Los chunks completos del Overworld se leen bajo demanda y se mallan en segundo plano. El lector usa `fastnbt` para interpretar NBT y transmite al modelo interno las paletas y propiedades de bloques. El visor aproxima las formas y texturas con mallas por chunk y un atlas original. Algunas formas, materiales y efectos de Minecraft se simplifican. La cámara es libre y atraviesa la geometría.

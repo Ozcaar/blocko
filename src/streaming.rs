@@ -11,6 +11,8 @@ use bevy::{
 
 use crate::{
     java::JavaWorld,
+    placement::Placement,
+    preview_mask::{self, MaskedMesh},
     terrain::mesh_chunk,
     world::{Chunk, ChunkPos},
 };
@@ -19,6 +21,17 @@ const VIEW_RADIUS: u32 = 5;
 const LOAD_RADIUS: u32 = VIEW_RADIUS + 1;
 const READ_JOBS: usize = 6;
 const MESH_JOBS: usize = 3;
+
+struct PreviewMeshes {
+    placement: Placement,
+    jobs: HashMap<ChunkPos, Task<MaskedMesh>>,
+    results: HashMap<ChunkPos, MaskResult>,
+}
+
+enum MaskResult {
+    Unchanged,
+    Replacement(Option<Entity>),
+}
 
 pub struct Stream {
     pub name: String,
@@ -32,6 +45,7 @@ pub struct Stream {
     rendered: HashMap<ChunkPos, Option<Entity>>,
     reads: HashMap<ChunkPos, Task<anyhow::Result<Option<Chunk>>>>,
     meshes: HashMap<ChunkPos, Task<Option<Mesh>>>,
+    preview: Option<PreviewMeshes>,
 }
 
 impl Stream {
@@ -48,6 +62,7 @@ impl Stream {
             rendered: HashMap::new(),
             reads: HashMap::new(),
             meshes: HashMap::new(),
+            preview: None,
         }
     }
 
@@ -65,6 +80,12 @@ impl Stream {
         self.loaded.get(&pos).map(Arc::as_ref)
     }
 
+    pub fn preview_busy(&self) -> bool {
+        self.preview
+            .as_ref()
+            .is_some_and(|preview| !preview.jobs.is_empty())
+    }
+
     pub fn first_error(&self) -> Option<&str> {
         self.priority
             .iter()
@@ -78,6 +99,7 @@ impl Stream {
         material: &Handle<StandardMaterial>,
         layer: usize,
         position: Vec3,
+        placement: Option<&Placement>,
     ) {
         let center = ChunkPos::from_block(position.x.floor() as i32, position.z.floor() as i32);
         if self.center != Some(center) {
@@ -87,6 +109,7 @@ impl Stream {
         self.schedule_reads();
         self.collect_meshes(commands, assets, material, layer);
         self.schedule_meshes(center);
+        self.update_preview(commands, assets, material, layer, placement);
     }
 
     fn recenter(&mut self, commands: &mut Commands, center: ChunkPos) {
@@ -178,15 +201,7 @@ impl Stream {
                 return true;
             };
             let entity = mesh.map(|mesh| {
-                commands
-                    .spawn((
-                        Mesh3d(assets.add(mesh)),
-                        MeshMaterial3d(material.clone()),
-                        Transform::from_xyz(pos.x as f32 * 16.0, 0.0, pos.z as f32 * 16.0),
-                        RenderLayers::none().with(layer),
-                        ChildOf(self.root),
-                    ))
-                    .id()
+                spawn_terrain(commands, assets.add(mesh), material, pos, layer, self.root)
             });
             self.rendered.insert(pos, entity);
             false
@@ -223,4 +238,117 @@ impl Stream {
             );
         }
     }
+
+    fn update_preview(
+        &mut self,
+        commands: &mut Commands,
+        assets: &mut Assets<Mesh>,
+        material: &Handle<StandardMaterial>,
+        layer: usize,
+        placement: Option<&Placement>,
+    ) {
+        let changed = self.preview.as_ref().is_some_and(|active| {
+            !placement.is_some_and(|placement| active.placement.same_mask(placement))
+        });
+        if changed && let Some(active) = self.preview.take() {
+            for (pos, result) in active.results {
+                if let MaskResult::Replacement(entity) = result {
+                    if let Some(entity) = entity {
+                        commands.entity(entity).try_despawn();
+                    }
+                    if let Some(Some(base)) = self.rendered.get(&pos) {
+                        commands.entity(*base).insert(Visibility::Inherited);
+                    }
+                }
+            }
+        }
+        let Some(placement) = placement else {
+            return;
+        };
+        let active = self.preview.get_or_insert_with(|| PreviewMeshes {
+            placement: placement.clone(),
+            jobs: HashMap::new(),
+            results: HashMap::new(),
+        });
+        active.jobs.retain(|pos, _| self.rendered.contains_key(pos));
+        active.results.retain(|pos, result| {
+            if self.rendered.contains_key(pos) {
+                return true;
+            }
+            if let MaskResult::Replacement(Some(entity)) = result {
+                commands.entity(*entity).try_despawn();
+            }
+            false
+        });
+
+        active.jobs.retain(|&pos, task| {
+            let Some(mesh) = check_ready(task) else {
+                return true;
+            };
+            let result = match mesh {
+                MaskedMesh::Unchanged => MaskResult::Unchanged,
+                MaskedMesh::Replaced(mesh) => {
+                    if let Some(Some(base)) = self.rendered.get(&pos) {
+                        commands.entity(*base).insert(Visibility::Hidden);
+                    }
+                    let entity = mesh.map(|mesh| {
+                        spawn_terrain(commands, assets.add(mesh), material, pos, layer, self.root)
+                    });
+                    MaskResult::Replacement(entity)
+                }
+            };
+            active.results.insert(pos, result);
+            false
+        });
+
+        for &pos in &self.priority {
+            if active.jobs.len() >= MESH_JOBS {
+                break;
+            }
+            if !self.rendered.contains_key(&pos)
+                || active.results.contains_key(&pos)
+                || active.jobs.contains_key(&pos)
+                || !preview_mask::affects_mesh(placement, pos)
+            {
+                continue;
+            }
+            let Some(chunk) = self.loaded.get(&pos).cloned() else {
+                continue;
+            };
+            let neighbors = pos
+                .neighbors()
+                .map(|neighbor| self.loaded.get(&neighbor).cloned());
+            let placement = placement.clone();
+            active.jobs.insert(
+                pos,
+                AsyncComputeTaskPool::get().spawn(async move {
+                    preview_mask::mesh_masked(
+                        &placement,
+                        pos,
+                        &chunk,
+                        std::array::from_fn(|i| neighbors[i].as_deref()),
+                    )
+                }),
+            );
+        }
+    }
+}
+
+fn spawn_terrain(
+    commands: &mut Commands,
+    mesh: Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    pos: ChunkPos,
+    layer: usize,
+    root: Entity,
+) -> Entity {
+    commands
+        .spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material.clone()),
+            Transform::from_xyz(pos.x as f32 * 16.0, 0.0, pos.z as f32 * 16.0),
+            RenderLayers::none().with(layer),
+            ChildOf(root),
+        ))
+        .id()
 }

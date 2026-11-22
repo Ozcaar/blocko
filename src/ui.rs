@@ -1,10 +1,13 @@
+use std::sync::Arc;
+
 use bevy::{camera::Viewport, prelude::*};
 use bevy_egui::{EguiContext, EguiFullOutput, EguiInput, egui};
 
 use crate::{
     editor::{self, DemoSelection, Destination, Overlay, PendingOpen, SceneAssets, View},
     flight::Flight,
-    selection::Selection,
+    placement::{AirMode, Placement},
+    selection::{Selection, preview_origin},
     structure::{Clipboard, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y, Volume},
 };
 
@@ -63,6 +66,7 @@ pub fn draw(
             );
             actions.open = actions.open.or(requested.open);
             actions.copy = actions.copy.or(requested.copy);
+            actions.start_preview |= requested.start_preview;
             viewport = Some((ctx.available_rect(), ctx.pixels_per_point()));
         }));
         if let Some((rect, pixels_per_point)) = viewport {
@@ -94,6 +98,12 @@ pub fn draw(
                 }
                 Err(error) => view.copy_notice = Some(format!("{error:#}")),
             }
+        } else if actions.start_preview
+            && let (Some(source), Some(stream)) = (&clipboard.current, &view.stream)
+        {
+            let origin = preview_origin(stream, transform);
+            view.preview = Some(Placement::new(Arc::clone(source), origin));
+            stop_marking(&mut view.selection);
         }
     }
     if demo_requested {
@@ -122,6 +132,7 @@ fn frame(fill: egui::Color32) -> egui::Frame {
 struct WindowActions {
     open: Option<Destination>,
     copy: Option<Volume>,
+    start_preview: bool,
 }
 
 fn window_ui(
@@ -244,6 +255,30 @@ fn window_ui(
                 }
                 panel_heading(ui, "Portapapeles compartido");
                 clipboard_contents(ui, clipboard);
+                if name.is_some() && (clipboard.current.is_some() || view.preview.is_some()) {
+                    panel_heading(ui, "Vista previa de pegado");
+                    let recalculating = view
+                        .stream
+                        .as_ref()
+                        .is_some_and(|stream| stream.preview_busy());
+                    actions.start_preview = ui
+                        .add_enabled_ui(!busy, |ui| {
+                            let Some(preview) = &mut view.preview else {
+                                return ui.button("Previsualizar pegado").clicked();
+                            };
+                            if preview_controls(
+                                ui,
+                                preview,
+                                &mut view.selection,
+                                clipboard,
+                                recalculating,
+                            ) {
+                                view.preview = None;
+                            }
+                            false
+                        })
+                        .inner;
+                }
                 if name.is_some() {
                     panel_heading(ui, "Selección 3D");
                     actions.copy = selection_controls(
@@ -253,6 +288,12 @@ fn window_ui(
                         busy,
                         clipboard.copying(),
                     );
+                    if view.selection.picking.is_some()
+                        && let Some(preview) = &mut view.preview
+                    {
+                        preview.moving = false;
+                        preview.notice = None;
+                    }
                     if view.copying {
                         ui.horizontal(|ui| {
                             ui.spinner();
@@ -317,6 +358,72 @@ fn clipboard_contents(ui: &mut egui::Ui, clipboard: &Clipboard) {
     }
 }
 
+fn preview_controls(
+    ui: &mut egui::Ui,
+    preview: &mut Placement,
+    selection: &mut Selection,
+    clipboard: &Clipboard,
+    recalculating: bool,
+) -> bool {
+    let uses_current_copy = clipboard
+        .current
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&preview.source, current));
+    if !uses_current_copy {
+        let [x, y, z] = preview.volume().dimensions();
+        ui.label(
+            egui::RichText::new(format!(
+                "Copia de {} · {x} × {y} × {z}",
+                preview.source.source_name
+            ))
+            .color(MUTED),
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut preview.mode, AirMode::Include, "Con aire");
+        ui.selectable_value(&mut preview.mode, AirMode::Ignore, "Sin aire");
+    });
+    ui.label(
+        egui::RichText::new(match preview.mode {
+            AirMode::Include => "El aire de la copia vacía esos bloques del destino.",
+            AirMode::Ignore => "Los huecos de la copia conservan los bloques del destino.",
+        })
+        .color(MUTED),
+    );
+
+    ui.add_space(5.0);
+    ui.label("Origen (esquina mínima)");
+    let mut origin = preview.origin();
+    if edit_coordinates(ui, &mut origin, preview.limits()) {
+        preview.set_origin(origin);
+        preview.moving = false;
+        preview.notice = None;
+    }
+    if preview.moving {
+        ui.label(
+            egui::RichText::new("Haz clic sobre el terreno para fijar el origen.").color(ACCENT),
+        );
+        if ui.small_button("Cancelar movimiento").clicked() {
+            preview.moving = false;
+            preview.notice = None;
+        }
+    } else if ui.button("Mover en el visor").clicked() {
+        preview.moving = true;
+        preview.notice = None;
+        stop_marking(selection);
+    }
+    if let Some(notice) = &preview.notice {
+        ui.label(egui::RichText::new(notice).color(ALERT));
+    }
+    if recalculating {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(egui::RichText::new("Actualizando vista previa…").color(MUTED));
+        });
+    }
+    ui.small_button("Cancelar vista previa").clicked()
+}
+
 fn selection_controls(
     ui: &mut egui::Ui,
     selection: &mut Selection,
@@ -337,9 +444,7 @@ fn selection_controls(
                 .color(ACCENT),
             );
             if ui.small_button("Cancelar marca").clicked() {
-                selection.picking = None;
-                selection.pick_b_after_a = false;
-                selection.notice = None;
+                stop_marking(selection);
             }
         }
         if let Some(notice) = &selection.notice {
@@ -394,31 +499,8 @@ fn corner_controls(ui: &mut egui::Ui, selection: &mut Selection, corner: usize, 
         }
     });
     if let Some(coords) = &mut selection.corners[corner] {
-        let changed = egui::Grid::new("coordenadas_esquina")
-            .show(ui, |ui| {
-                let mut changed = false;
-                for (axis, ((min, max), coordinate)) in ["X", "Y", "Z"]
-                    .into_iter()
-                    .zip(COORDINATE_LIMITS.into_iter().zip(coords))
-                {
-                    ui.monospace(axis);
-                    changed |= ui
-                        .add_sized(
-                            [82.0, ui.spacing().interact_size.y],
-                            egui::DragValue::new(coordinate)
-                                .range(min..=max)
-                                .update_while_editing(false),
-                        )
-                        .changed();
-                    ui.end_row();
-                }
-                changed
-            })
-            .inner;
-        if changed {
-            selection.picking = None;
-            selection.pick_b_after_a = false;
-            selection.notice = None;
+        if edit_coordinates(ui, coords, COORDINATE_LIMITS) {
+            stop_marking(selection);
         }
     } else if ui.small_button("Editar coordenadas").clicked() {
         let near_camera = position.floor().as_ivec3().to_array();
@@ -428,10 +510,32 @@ fn corner_controls(ui: &mut egui::Ui, selection: &mut Selection, corner: usize, 
                 near_camera[axis].clamp(min, max)
             })
         }));
-        selection.picking = None;
-        selection.pick_b_after_a = false;
-        selection.notice = None;
+        stop_marking(selection);
     }
+}
+
+fn edit_coordinates(ui: &mut egui::Ui, coords: &mut [i32; 3], limits: [(i32, i32); 3]) -> bool {
+    egui::Grid::new("coordenadas")
+        .show(ui, |ui| {
+            let mut changed = false;
+            for (axis, ((min, max), coordinate)) in ["X", "Y", "Z"]
+                .into_iter()
+                .zip(limits.into_iter().zip(coords))
+            {
+                ui.monospace(axis);
+                changed |= ui
+                    .add_sized(
+                        [82.0, ui.spacing().interact_size.y],
+                        egui::DragValue::new(coordinate)
+                            .range(min..=max)
+                            .update_while_editing(false),
+                    )
+                    .changed();
+                ui.end_row();
+            }
+            changed
+        })
+        .inner
 }
 
 fn corner_name(corner: usize) -> &'static str {
@@ -441,5 +545,11 @@ fn corner_name(corner: usize) -> &'static str {
 fn arm_pick(selection: &mut Selection, corner: usize, then_b: bool) {
     selection.picking = Some(corner);
     selection.pick_b_after_a = then_b;
+    selection.notice = None;
+}
+
+fn stop_marking(selection: &mut Selection) {
+    selection.picking = None;
+    selection.pick_b_after_a = false;
     selection.notice = None;
 }

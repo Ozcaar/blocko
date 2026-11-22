@@ -1,6 +1,9 @@
 mod editor;
 mod flight;
 mod java;
+mod placement;
+mod preview_mask;
+mod preview_visual;
 mod selection;
 mod streaming;
 mod structure;

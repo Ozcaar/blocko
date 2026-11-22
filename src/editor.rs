@@ -14,6 +14,8 @@ use bevy_egui::{EguiContextSettings, EguiGlobalSettings, EguiPlugin};
 use crate::{
     flight::{self, Flight},
     java::JavaWorld,
+    placement::Placement,
+    preview_visual,
     selection::{self, Selection},
     streaming::Stream,
     structure::{self, Clipboard},
@@ -35,6 +37,7 @@ pub struct View {
     pub selection: Selection,
     pub copying: bool,
     pub copy_notice: Option<String>,
+    pub preview: Option<Placement>,
 }
 
 #[derive(Component)]
@@ -91,7 +94,7 @@ pub struct DemoSelection(pub Option<String>);
 
 #[derive(Resource)]
 pub struct SceneAssets {
-    terrain: Handle<StandardMaterial>,
+    pub terrain: Handle<StandardMaterial>,
     cube: Handle<Mesh>,
     pedestal: Handle<StandardMaterial>,
     teal: Handle<StandardMaterial>,
@@ -113,17 +116,19 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
         })
         .init_resource::<DemoSelection>()
         .init_resource::<Clipboard>()
-        .add_systems(Startup, (setup, selection::setup))
+        .add_systems(Startup, (setup, preview_visual::setup).chain())
+        .add_systems(Startup, selection::setup)
         .add_systems(
             Update,
             (
                 flight::fly,
                 finish_opening,
-                stream_worlds,
                 structure::finish_copying,
                 selection::pick,
                 ui::draw,
+                stream_worlds,
                 selection::draw,
+                preview_visual::draw,
             )
                 .chain(),
         )
@@ -229,6 +234,7 @@ fn new_view(commands: &mut Commands, layer: usize, world_name: Option<&str>) -> 
         selection: Selection::default(),
         copying: false,
         copy_notice: None,
+        preview: None,
     };
     (window, view)
 }
@@ -264,6 +270,7 @@ fn activate(commands: &mut Commands, window: Entity, view: &mut View, world: Jav
     view.selection = Selection::default();
     view.copying = false;
     view.copy_notice = None;
+    view.preview = None;
 }
 
 fn world_title(name: &str) -> String {
@@ -373,6 +380,7 @@ fn stream_worlds(
         let Ok(camera) = cameras.get(view.camera) else {
             continue;
         };
+        let view = &mut *view;
         if let Some(stream) = &mut view.stream {
             stream.update(
                 &mut commands,
@@ -380,6 +388,7 @@ fn stream_worlds(
                 &assets.terrain,
                 layer,
                 camera.translation,
+                view.preview.as_ref(),
             );
         }
     }

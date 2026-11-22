@@ -95,7 +95,7 @@ impl Structure {
         self.block_entities.get(&position)
     }
 
-    fn capture(
+    pub(crate) fn capture(
         source_name: String,
         volume: Volume,
         mut load_chunk: impl FnMut(ChunkPos) -> Result<Option<Chunk>>,
@@ -208,7 +208,7 @@ struct CopyTask {
 
 #[derive(Default, Resource)]
 pub struct Clipboard {
-    pub current: Option<Structure>,
+    pub current: Option<Arc<Structure>>,
     pending: Option<CopyTask>,
 }
 
@@ -246,7 +246,7 @@ pub fn finish_copying(mut clipboard: ResMut<Clipboard>, mut views: Query<&mut Vi
     let window = pending.window;
     let notice = match result {
         Ok(structure) => {
-            clipboard.current = Some(structure);
+            clipboard.current = Some(Arc::new(structure));
             "Construcción copiada al portapapeles de Blocko".into()
         }
         Err(error) => format!("No se pudo copiar desde {}. {error:#}", pending.source_name),
