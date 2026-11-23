@@ -21,6 +21,8 @@ const SELECTED: Color32 = Color32::from_rgb(43, 69, 76);
 const HOVER: Color32 = Color32::from_rgb(50, 61, 77);
 const PRESSED: Color32 = Color32::from_rgb(60, 73, 90);
 const DIM: Color32 = Color32::from_rgb(119, 132, 154);
+const MODE_SELECTED: Color32 = Color32::from_rgb(31, 44, 51);
+pub(super) const MODE_RAIL_MARGIN: i8 = 7;
 
 pub(super) fn apply(ctx: &egui::Context) {
     static FONTS: OnceLock<FontDefinitions> = OnceLock::new();
@@ -117,8 +119,6 @@ pub(super) enum Icon {
     Close,
     Pointer,
     Selection,
-    Place,
-    Copy,
     Clipboard,
     Target,
     Pin,
@@ -180,24 +180,6 @@ impl Icon {
                 ] {
                     path(&[[x + 4. * sx, y], [x, y], [x, y + 4. * sy]]);
                 }
-            }
-            Self::Place => {
-                path(&[
-                    [1.5, 8.],
-                    [8., 11.5],
-                    [14.5, 8.],
-                    [14.5, 11.5],
-                    [8., 15.],
-                    [1.5, 11.5],
-                    [1.5, 8.],
-                ]);
-                path(&[[8., 11.5], [8., 15.]]);
-                path(&[[8., 1.], [8., 8.]]);
-                path(&[[5.5, 5.5], [8., 8.], [10.5, 5.5]]);
-            }
-            Self::Copy => {
-                path(&[[2., 10.], [2., 2.], [10., 2.]]);
-                outline(p(5., 5.), p(14., 14.), 1.5_f32);
             }
             Self::Clipboard => {
                 path(&[
@@ -311,28 +293,31 @@ pub(super) fn button(
         selected,
         style,
     ) {
-        (false, _, _, _, true, ButtonStyle::Mode(_)) => SELECTED,
+        (false, _, _, _, true, ButtonStyle::Mode(_)) => FIELD,
         (false, ..) => Color32::TRANSPARENT,
         (_, true, _, true, _, _) => Color32::from_rgb(149, 225, 211),
         (_, true, ..) => ACCENT,
         (_, _, true, ..) => PRESSED,
+        (_, _, _, true, false, ButtonStyle::Mode(_)) => TOOLBAR,
         (_, _, _, true, ..) => HOVER,
+        (_, _, _, _, true, ButtonStyle::Mode(_)) => MODE_SELECTED,
         (_, _, _, _, true, _) => SELECTED,
         (_, _, _, _, _, ButtonStyle::Tool) => PANEL,
         _ => Color32::TRANSPARENT,
     };
-    let text = if selected && mode {
-        ACCENT
-    } else if !enabled {
+    let text = if !enabled {
         DIM
     } else if primary {
         BAR
     } else if selected {
         ACCENT
+    } else if mode && !response.hovered() && !response.has_focus() {
+        MUTED
     } else {
         TEXT
     };
-    let stroke = if response.has_focus() || (selected && !mode) {
+    let focused = response.has_focus() && (enabled || !mode);
+    let stroke = if focused || (selected && !mode) {
         Stroke::new(1.0_f32, ACCENT)
     } else if enabled && matches!(style, ButtonStyle::Tool) {
         Stroke::new(1.0_f32, LINE)
@@ -340,12 +325,21 @@ pub(super) fn button(
         Stroke::NONE
     };
     let rect = response.rect;
-    ui.painter().rect(rect, 6, fill, stroke, StrokeKind::Inside);
+    let corner_radius = if mode { 0_u8 } else { 6 };
+    let painter = ui.painter();
+    painter.rect(rect, corner_radius, fill, stroke, StrokeKind::Inside);
     if mode && selected {
-        ui.painter().rect_filled(
-            Rect::from_center_size(pos2(rect.left() - 4.0, rect.center().y), vec2(2.5, 19.0)),
-            1,
-            ACCENT,
+        painter.rect_filled(
+            Rect::from_min_size(
+                pos2(rect.left() - f32::from(MODE_RAIL_MARGIN), rect.top()),
+                vec2(2.0, rect.height()),
+            ),
+            0,
+            if enabled {
+                ACCENT
+            } else {
+                ACCENT.gamma_multiply(0.5)
+            },
         );
     }
     let mut x = rect.left() + (rect.width() - galley.size().x - gap - icon_width) / 2.0;
@@ -496,7 +490,12 @@ mod tests {
 
     #[test]
     fn styled_buttons_preserve_keyboard_activation_and_respect_disabled_state() {
-        for enabled in [true, false] {
+        for (style, icon, label, enabled) in [
+            (ButtonStyle::Primary, Icon::Folder, "Abrir", true),
+            (ButtonStyle::Primary, Icon::Folder, "Abrir", false),
+            (ButtonStyle::Mode(false), Icon::Selection, "", true),
+            (ButtonStyle::Mode(true), Icon::Selection, "", false),
+        ] {
             let context = egui::Context::default();
             apply(&context);
             let frame = |events: Vec<egui::Event>, focus: bool| {
@@ -509,14 +508,11 @@ mod tests {
                     },
                     |ctx| {
                         egui::CentralPanel::default().show(ctx, |ui| {
-                            let reply = button(
-                                ui,
-                                Some(Icon::Folder),
-                                "Abrir",
-                                "Abrir mundo",
-                                ButtonStyle::Primary,
-                                enabled,
-                            );
+                            let reply =
+                                button(ui, Some(icon), label, "Herramienta", style, enabled);
+                            if matches!(style, ButtonStyle::Mode(_)) {
+                                assert_eq!(reply.rect.size(), vec2(38.0, 38.0));
+                            }
                             if focus {
                                 reply.request_focus();
                             }

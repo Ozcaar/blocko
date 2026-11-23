@@ -28,6 +28,8 @@ use crate::{
 };
 
 mod appearance;
+mod dialogs;
+mod menus;
 
 use appearance::{ACCENT, ALERT, BAR, ButtonStyle, FIELD, Icon, LINE, MUTED, PANEL, TEXT, TOOLBAR};
 
@@ -163,7 +165,9 @@ pub fn draw(
             if view.stream.is_some() || view.demo_scene.is_some() {
                 viewport = Some((rect, scale));
             }
-            if view.selecting && view.preview.is_none() && view.viewport.is_some() {
+            if view.preview.is_some() {
+                draw_placement_badge(ctx, rect, *language);
+            } else if view.selecting && view.viewport.is_some() {
                 draw_corner_labels(
                     ctx,
                     rect,
@@ -179,7 +183,7 @@ pub fn draw(
             if !focused
                 || workspace.blocks_camera
                 || workspace.pending.is_some()
-                || view.paste.locks_preview()
+                || view.paste.writes()
                 || result.tab.is_some()
                 || result.open.is_some()
                 || result.paste.is_some()
@@ -189,6 +193,7 @@ pub fn draw(
             }
             let view = &mut *view;
             if !flight.captured()
+                && !view.paste.locks_preview()
                 && view.viewport.is_some()
                 && let Some(point) = ctx
                     .pointer_hover_pos()
@@ -221,6 +226,7 @@ pub fn draw(
                     (action_enabled(action, &view, &clipboard, flight.captured())
                         || (matches!(action, Action::Place | Action::RepeatPlace)
                             && !flight.captured()
+                            && !view.paste.locks_preview()
                             && view.preview.is_some()))
                     .then_some((action, point))
                 })
@@ -340,8 +346,38 @@ fn corner_color(corner: usize) -> egui::Color32 {
     }
 }
 
+fn draw_placement_badge(ctx: &egui::Context, viewport: egui::Rect, lang: Language) {
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("placement mode"),
+        ))
+        .with_clip_rect(viewport);
+    let text = painter.layout_no_wrap(
+        lang.text(Text::Placement).into(),
+        appearance::strong(13.0),
+        TEXT,
+    );
+    let rect = egui::Rect::from_min_size(
+        viewport.min + egui::vec2(12.0, 12.0),
+        text.size() + egui::vec2(31.0, 12.0),
+    );
+    painter.rect(
+        rect,
+        4,
+        FIELD,
+        egui::Stroke::new(1.0_f32, LINE),
+        egui::StrokeKind::Inside,
+    );
+    painter.circle_filled(egui::pos2(rect.left() + 11.0, rect.center().y), 3.0, ALERT);
+    painter.galley(rect.min + egui::vec2(20.0, 6.0), text, TEXT);
+}
+
 fn input_blocked(ctx: &egui::Context) -> bool {
-    ctx.wants_keyboard_input() || egui::Popup::is_any_open(ctx)
+    ctx.wants_keyboard_input()
+        || egui::Popup::is_any_open(ctx)
+        || menus::window_state(ctx).dialog.is_some()
+        || ctx.memory(|memory| memory.top_modal_layer().is_some())
 }
 
 fn update_viewport(
@@ -425,18 +461,33 @@ fn window_ui(
     let mut actions = WindowActions::default();
     let busy = workspace.pending.is_some() || view.paste.writes();
     let name = view.stream.as_ref().map(|stream| stream.name.clone());
-    menu_bar(ctx, busy, name.is_some(), lang, &mut actions);
+    let scene = name.is_some() || view.demo_scene.is_some();
+    let mut chrome = menus::window_state(ctx);
+    menus::bar(
+        ctx,
+        &mut chrome,
+        workspace.active,
+        view,
+        clipboard,
+        busy,
+        captured,
+        lang,
+        bindings,
+        &mut actions,
+    );
     if !tabs.is_empty() {
         tab_bar(ctx, window, workspace, tabs, busy, lang, &mut actions);
     }
     status_bar(
         ctx, workspace, view, position, captured, clipboard, lang, bindings,
     );
-    tool_rail(ctx, view, clipboard, busy, captured, lang, &mut actions);
+    if chrome.activity_bar {
+        tool_rail(ctx, view, busy, captured, lang, &mut actions);
+    }
 
-    if name.is_none() && view.demo_scene.is_none() {
+    if !scene {
         empty_workspace(ctx, workspace, busy, lang, &mut actions);
-    } else {
+    } else if chrome.inspector {
         let width = (ctx.content_rect().width() * 0.235).clamp(194.0, 298.0);
         egui::SidePanel::right("inspector")
             .exact_width(width)
@@ -455,7 +506,6 @@ fn window_ui(
                                     name,
                                     position,
                                     busy,
-                                    captured,
                                     clipboard,
                                     lang,
                                     &mut actions,
@@ -477,6 +527,14 @@ fn window_ui(
                     });
             });
     }
+    if let Some(dialog) = chrome.dialog {
+        let result = dialogs::show(ctx, dialog, lang, bindings);
+        actions.language = result.language;
+        if result.close {
+            chrome.dialog = None;
+        }
+    }
+    menus::save_window_state(ctx, chrome);
     actions
 }
 
@@ -536,85 +594,27 @@ fn empty_workspace(
         });
 }
 
-fn menu_bar(
-    ctx: &egui::Context,
-    busy: bool,
-    world_open: bool,
-    lang: Language,
-    actions: &mut WindowActions,
-) {
-    egui::TopBottomPanel::top("menu")
-        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(12, 6)))
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let (logo, _) =
-                    ui.allocate_exact_size(egui::vec2(27.0, 27.0), egui::Sense::hover());
-                ui.painter().rect_filled(logo, 7, TOOLBAR);
-                Icon::Cube.paint(ui.painter(), logo.shrink(5.0), ACCENT);
-                appearance::headline(ui, "Blocko", 18.0);
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_enabled_ui(!busy, |ui| {
-                    ui.menu_button(lang.text(Text::WorldMenu), |ui| {
-                        let commands = [
-                            (true, Text::OpenWorld, Destination::Tab),
-                            (world_open, Text::OpenReplace, Destination::Replace),
-                            (true, Text::OpenWindow, Destination::NewWindow),
-                        ];
-                        for (enabled, text, destination) in commands {
-                            if ui
-                                .add_enabled(enabled, egui::Button::new(lang.text(text)))
-                                .clicked()
-                            {
-                                actions.open = Some(destination);
-                                ui.close();
-                            }
-                        }
-                    });
-                });
-                ui.menu_button(lang.text(Text::Language), |ui| {
-                    for language in Language::ALL {
-                        if ui
-                            .selectable_label(language == lang, language.name())
-                            .clicked()
-                        {
-                            actions.language = Some(language);
-                            ui.close();
-                        }
-                    }
-                });
-            });
-        });
-}
-
 fn tool_rail(
     ctx: &egui::Context,
     view: &mut View,
-    clipboard: &Clipboard,
     busy: bool,
     captured: bool,
     lang: Language,
     actions: &mut WindowActions,
 ) {
     egui::SidePanel::left("primary tools")
-        .exact_width(56.0)
+        .exact_width(52.0)
         .resizable(false)
-        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(8, 12)))
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(appearance::MODE_RAIL_MARGIN, 9)))
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.spacing_mut().item_spacing.y = 7.0;
+                ui.spacing_mut().item_spacing.y = 5.0;
                 let active = tools_context(view);
                 let has_world = view.stream.is_some();
                 let enabled = has_world && !busy && !captured && !view.paste.locks_preview();
-                for (mode, icon, label, available) in [
-                    (EditorContext::Explore, Icon::Pointer, Text::Explore, true),
-                    (EditorContext::Select, Icon::Selection, Text::Select, true),
-                    (
-                        EditorContext::Place,
-                        Icon::Place,
-                        Text::PreviewButton,
-                        clipboard.current.is_some(),
-                    ),
+                for (mode, icon, label) in [
+                    (EditorContext::Explore, Icon::Pointer, Text::Explore),
+                    (EditorContext::Select, Icon::Selection, Text::Select),
                 ] {
                     let selected = mode == active && (has_world || view.demo_scene.is_some());
                     if appearance::button(
@@ -623,40 +623,28 @@ fn tool_rail(
                         "",
                         lang.text(label),
                         ButtonStyle::Mode(selected),
-                        enabled && available,
+                        enabled,
                     )
                     .clicked()
                         && mode != active
                     {
-                        choose_mode(view, mode, actions);
+                        view.selecting = mode == EditorContext::Select;
+                        if !view.selecting {
+                            stop_marking(&mut view.selection);
+                        }
+                        if view.preview.is_some() {
+                            actions.editor = Some((Action::CancelPaste, None));
+                        }
+                    }
+                    if mode == EditorContext::Explore {
+                        ui.separator();
                     }
                 }
             });
         });
 }
 
-fn choose_mode(view: &mut View, mode: EditorContext, actions: &mut WindowActions) {
-    if mode == EditorContext::Place {
-        actions.editor = Some((Action::StartPaste, None));
-    } else {
-        view.selecting = mode == EditorContext::Select;
-        if !view.selecting {
-            stop_marking(&mut view.selection);
-        }
-        if view.preview.is_some() {
-            actions.editor = Some((Action::CancelPaste, None));
-        }
-    }
-}
-
-fn selection_actions(
-    ui: &mut egui::Ui,
-    view: &mut View,
-    clipboard: &Clipboard,
-    captured: bool,
-    lang: Language,
-    actions: &mut WindowActions,
-) {
+fn selection_actions(ui: &mut egui::Ui, selection: &mut Selection, lang: Language) {
     ui.horizontal_wrapped(|ui| {
         if appearance::button(
             ui,
@@ -668,9 +656,9 @@ fn selection_actions(
         )
         .clicked()
         {
-            arm_pick(&mut view.selection, 0, true);
+            arm_pick(selection, 0, true);
         }
-        if view.selection.picking.is_some() {
+        if selection.picking.is_some() {
             let label = lang.text(Text::CancelMark);
             if appearance::button(
                 ui,
@@ -682,7 +670,7 @@ fn selection_actions(
             )
             .clicked()
             {
-                stop_marking(&mut view.selection);
+                stop_marking(selection);
             }
         } else if appearance::button(
             ui,
@@ -690,23 +678,11 @@ fn selection_actions(
             "",
             lang.text(Text::ClearSelection),
             ButtonStyle::Quiet,
-            view.selection.corners.iter().any(Option::is_some),
+            selection.corners.iter().any(Option::is_some),
         )
         .clicked()
         {
-            view.selection = Selection::default();
-        }
-        if appearance::button(
-            ui,
-            Some(Icon::Copy),
-            lang.text(Text::ActionCopy),
-            lang.text(Text::CopyButton),
-            ButtonStyle::Tool,
-            action_enabled(Action::Copy, view, clipboard, captured),
-        )
-        .clicked()
-        {
-            actions.editor = Some((Action::Copy, None));
+            *selection = Selection::default();
         }
     });
 }
@@ -771,18 +747,6 @@ fn placement_actions(
         .clicked()
         {
             actions.paste = Some(PasteAction::Prepare);
-        }
-        if appearance::button(
-            ui,
-            Some(Icon::Close),
-            lang.text(Text::ActionCancel),
-            lang.text(Text::CancelPreview),
-            ButtonStyle::Quiet,
-            true,
-        )
-        .clicked()
-        {
-            actions.editor = Some((Action::CancelPaste, None));
         }
     });
 }
@@ -956,7 +920,6 @@ fn inspector(
     name: &str,
     position: Vec3,
     busy: bool,
-    captured: bool,
     clipboard: &Clipboard,
     lang: Language,
     actions: &mut WindowActions,
@@ -993,7 +956,7 @@ fn inspector(
                     .is_some_and(|stream| stream.preview_busy());
                 preview_controls(ui, preview, recalculating, lang);
             } else if view.selecting {
-                selection_actions(ui, view, clipboard, captured, lang, actions);
+                selection_actions(ui, &mut view.selection, lang);
                 ui.add_space(4.0);
                 selection_details(ui, &mut view.selection, position, lang);
             }
@@ -1010,8 +973,8 @@ fn inspector(
     egui::CollapsingHeader::new(
         egui::RichText::new(lang.text(Text::Clipboard)).font(appearance::strong(14.0)),
     )
-    .id_salt(("clipboard", placing))
-    .default_open(!placing)
+    .id_salt("shared clipboard")
+    .default_open(false)
     .show_unindented(ui, |ui| {
         inspector_card(ui, |ui| clipboard_contents(ui, clipboard, lang));
     });
@@ -1058,8 +1021,11 @@ fn tools_context(view: &View) -> EditorContext {
 }
 
 fn action_enabled(action: Action, view: &View, clipboard: &Clipboard, captured: bool) -> bool {
-    if view.stream.is_none() || view.paste.locks_preview() {
+    if view.stream.is_none() || view.paste.writes() || !action.allowed_in(tools_context(view)) {
         return false;
+    }
+    if view.paste.locks_preview() {
+        return action == Action::CancelPaste && view.preview.is_some();
     }
     match action {
         Action::Copy => {
@@ -1093,6 +1059,9 @@ pub(crate) fn execute_action(
     action: Action,
     hit: Option<selection::Hit>,
 ) {
+    if view.paste.writes() {
+        return;
+    }
     let Some(stream) = &view.stream else { return };
     match action {
         Action::Copy => {
@@ -1285,6 +1254,24 @@ fn status_notice(
     Some(notice)
 }
 
+fn binding_label(bindings: &Bindings, action: Action, lang: Language, compact: bool) -> String {
+    bindings.label(action, |key| {
+        lang.text(match key {
+            Control::PrimaryMouse if compact => Text::KeyLeftClickShort,
+            Control::PrimaryMouse => Text::KeyLeftClick,
+            Control::SecondaryMouse if compact => Text::KeyRightClickShort,
+            Control::SecondaryMouse => Text::KeyRightClick,
+            Control::MiddleMouse => Text::KeyMiddleClick,
+            Control::ExtraMouse1 => Text::KeyMouse4,
+            Control::ExtraMouse2 => Text::KeyMouse5,
+            Control::Backspace => Text::KeyBackspace,
+            Control::Space => Text::KeySpace,
+            Control::LeftControl => Text::KeyLeftCtrl,
+            Control::RightControl => Text::KeyRightCtrl,
+        })
+    })
+}
+
 fn help_bar(
     ui: &mut egui::Ui,
     view: &View,
@@ -1297,23 +1284,7 @@ fn help_bar(
     if compact {
         ui.spacing_mut().item_spacing.x = 5.0;
     }
-    let binding = |action| {
-        bindings.label(action, |key| {
-            lang.text(match key {
-                Control::PrimaryMouse if compact => Text::KeyLeftClickShort,
-                Control::PrimaryMouse => Text::KeyLeftClick,
-                Control::SecondaryMouse if compact => Text::KeyRightClickShort,
-                Control::SecondaryMouse => Text::KeyRightClick,
-                Control::MiddleMouse => Text::KeyMiddleClick,
-                Control::ExtraMouse1 => Text::KeyMouse4,
-                Control::ExtraMouse2 => Text::KeyMouse5,
-                Control::Backspace => Text::KeyBackspace,
-                Control::Space => Text::KeySpace,
-                Control::LeftControl => Text::KeyLeftCtrl,
-                Control::RightControl => Text::KeyRightCtrl,
-            })
-        })
-    };
+    let binding = |action| binding_label(bindings, action, lang, compact);
     let context = tools_context(view);
     let mut hint = |controls: String, label: Text| {
         if !controls.is_empty() {
@@ -1727,6 +1698,33 @@ fn stop_marking(selection: &mut Selection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fields_popups_and_preferences_block_viewport_shortcuts() {
+        let ctx = egui::Context::default();
+        appearance::apply(&ctx);
+        let mut text = String::from("18");
+        let field = egui::Id::new("coordinate");
+        assert!(!input_blocked(&ctx));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(field))
+                    .request_focus();
+                assert!(input_blocked(ctx));
+            });
+        });
+        ctx.memory_mut(|memory| memory.surrender_focus(field));
+        assert!(!input_blocked(&ctx));
+        let popup = egui::Id::new("edit popup");
+        egui::Popup::open_id(&ctx, popup);
+        assert!(input_blocked(&ctx));
+        egui::Popup::close_id(&ctx, popup);
+        assert!(!input_blocked(&ctx));
+        let mut chrome = menus::window_state(&ctx);
+        chrome.dialog = Some(dialogs::Dialog::Preferences);
+        menus::save_window_state(&ctx, chrome);
+        assert!(input_blocked(&ctx));
+    }
 
     #[test]
     fn contextual_commands_reserve_the_same_viewport_space_when_empty_or_overflowing() {

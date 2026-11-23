@@ -27,8 +27,24 @@ macro_rules! catalog {
 catalog! {
     DialogOpen => "Abrir carpeta del mundo de Minecraft", "Open Minecraft world folder";
     OpenWorld => "Abrir mundo…", "Open world…";
-    WorldMenu => "Mundo", "World";
-    OpenReplace => "Reemplazar pestaña…", "Replace tab…";
+    FileMenu => "Archivo", "File";
+    EditMenu => "Editar", "Edit";
+    ViewMenu => "Ver", "View";
+    HelpMenu => "Ayuda", "Help";
+    ActivityBar => "Barra de herramientas", "Tool bar";
+    Inspector => "Inspector", "Inspector";
+    Preferences => "Preferencias", "Preferences";
+    Controls => "Controles y atajos", "Controls and shortcuts";
+    About => "Acerca de Blocko", "About Blocko";
+    CloseDialog => "Cerrar", "Close";
+    AboutVersion => "Versión {0}", "Version {0}";
+    AboutDescription => "Editor de escritorio para mundos de Minecraft Java Edition 1.21.1.", "Desktop editor for Minecraft Java Edition 1.21.1 worlds.";
+    ControlsCamera => "Cámara", "Camera";
+    ControlsEditing => "Edición", "Editing";
+    CopySelection => "Copiar selección", "Copy selection";
+    PasteStructure => "Pegar construcción", "Paste structure";
+    CancelOperation => "Cancelar operación", "Cancel operation";
+    OpenReplace => "Reemplazar mundo de esta pestaña…", "Replace world in this tab…";
     OpenWindow => "Abrir en otra ventana…", "Open in new window…";
     Language => "Idioma", "Language";
     EmptyTitle => "Abre un mundo de Minecraft", "Open a Minecraft world";
@@ -51,7 +67,6 @@ catalog! {
     ClipboardBlocks => "{0} bloques, incluido el aire", "{0} blocks, including air";
     ClipboardEntity => "{0} entidad de bloque", "{0} block entity";
     ClipboardEntities => "{0} entidades de bloque", "{0} block entities";
-    PreviewButton => "Previsualizar pegado", "Preview paste";
     LoadingTerrain => "Cargando terreno…", "Loading terrain…";
     EmptyTerrain => "No hay terreno generado cerca", "No generated terrain nearby";
     VisibleChunks => "{0} chunks visibles", "{0} visible chunks";
@@ -67,7 +82,6 @@ catalog! {
     PickMiss => "Acerca la cámara y elige un bloque visible.", "Move closer and choose a visible block.";
     ClearSelection => "Limpiar selección", "Clear selection";
     Dimensions => "{0} × {1} × {2} bloques", "{0} × {1} × {2} blocks";
-    CopyButton => "Copiar volumen", "Copy volume";
     Corner => "Esquina {0}", "Corner {0}";
     Mark => "Marcar", "Mark";
     EditCoordinates => "Editar coordenadas", "Edit coordinates";
@@ -103,7 +117,6 @@ catalog! {
     NoPasteTarget => "Apunta a una cara visible del terreno o fija las coordenadas.", "Point at a visible terrain face or pin the coordinates.";
     PreviewUpdating => "Actualizando vista previa…", "Updating preview…";
     PreviewDestination => "Vista previa · {0}", "Preview · {0}";
-    CancelPreview => "Cancelar vista previa", "Cancel preview";
     CameraLook => "Mirar", "Look";
     CameraMove => "Mover", "Move";
     CameraHeight => "Subir / bajar", "Rise / descend";

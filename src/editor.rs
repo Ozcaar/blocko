@@ -1014,28 +1014,49 @@ mod tests {
         let pradera = open(&mut app, window, scratch.clone(), Destination::Tab)?;
         let clipboard = app.world().resource::<Clipboard>().current.clone().unwrap();
         let preview = Placement::new(clipboard.clone(), [4, 90, -46]);
-        app.world_mut().get_mut::<View>(pradera).unwrap().preview = Some(preview.clone());
-        app.world_mut()
-            .resource_scope(|world, mut clipboard: Mut<Clipboard>| {
-                crate::ui::execute_action(
-                    &mut world.get_mut::<View>(pradera).unwrap(),
-                    pradera,
-                    &mut clipboard,
-                    crate::actions::Action::CancelPaste,
-                    None,
-                );
-            });
-        assert!(app.world().get::<View>(pradera).unwrap().preview.is_none());
-        assert_eq!(inventory(&scratch)?, before);
-        assert!(!scratch.join("blocko-backups").exists());
-        assert!(std::sync::Arc::ptr_eq(
-            app.world()
-                .resource::<Clipboard>()
-                .current
-                .as_ref()
-                .unwrap(),
-            &clipboard,
-        ));
+        let cancel = |app: &mut App| {
+            app.world_mut()
+                .resource_scope(|world, mut clipboard: Mut<Clipboard>| {
+                    crate::ui::execute_action(
+                        &mut world.get_mut::<View>(pradera).unwrap(),
+                        pradera,
+                        &mut clipboard,
+                        crate::actions::Action::CancelPaste,
+                        None,
+                    );
+                });
+        };
+        for prepared in [false, true] {
+            let mut view = app.world_mut().get_mut::<View>(pradera).unwrap();
+            view.preview = Some(preview.clone());
+            if prepared {
+                paste::apply_action(&mut view, PasteAction::Prepare);
+                settle(&mut app, |world| {
+                    !matches!(
+                        world.get::<View>(pradera).unwrap().paste,
+                        PasteState::Preparing(..)
+                    )
+                })?;
+                assert!(matches!(
+                    app.world().get::<View>(pradera).unwrap().paste,
+                    PasteState::Ready(_)
+                ));
+            }
+            cancel(&mut app);
+            let view = app.world().get::<View>(pradera).unwrap();
+            assert!(view.preview.is_none());
+            assert!(matches!(view.paste, PasteState::Idle));
+            assert_eq!(inventory(&scratch)?, before);
+            assert!(!scratch.join("blocko-backups").exists());
+            assert!(std::sync::Arc::ptr_eq(
+                app.world()
+                    .resource::<Clipboard>()
+                    .current
+                    .as_ref()
+                    .unwrap(),
+                &clipboard,
+            ));
+        }
 
         tab(&mut app, window, pradera, TabAction::Detach(None));
         let detached = app.world().get::<View>(pradera).unwrap().owner;
@@ -1049,10 +1070,12 @@ mod tests {
                 view.preview.as_mut().unwrap().set_origin(origin);
                 paste::apply_action(&mut view, PasteAction::Place { repeat });
                 paste::apply_action(&mut view, PasteAction::Place { repeat: false });
-                assert!(
-                    matches!(&view.paste, PasteState::Preparing(Some(value), _) if *value == repeat)
-                );
             }
+            cancel(&mut app);
+            assert!(matches!(
+                &app.world().get::<View>(pradera).unwrap().paste,
+                PasteState::Preparing(Some(value), _) if *value == repeat
+            ));
             app.world_mut()
                 .write_message(WindowCloseRequested { window: detached });
             settle(&mut app, |world| {
