@@ -429,12 +429,10 @@ fn window_ui(
     if !tabs.is_empty() {
         tab_bar(ctx, window, workspace, tabs, busy, lang, &mut actions);
     }
-    if name.is_some() || view.demo_scene.is_some() {
-        tool_bar(ctx, view, clipboard, busy, captured, lang, &mut actions);
-    }
     status_bar(
         ctx, workspace, view, position, captured, clipboard, lang, bindings,
     );
+    tool_rail(ctx, view, clipboard, busy, captured, lang, &mut actions);
 
     if name.is_none() && view.demo_scene.is_none() {
         empty_workspace(ctx, workspace, busy, lang, &mut actions);
@@ -457,6 +455,7 @@ fn window_ui(
                                     name,
                                     position,
                                     busy,
+                                    captured,
                                     clipboard,
                                     lang,
                                     &mut actions,
@@ -588,7 +587,7 @@ fn menu_bar(
         });
 }
 
-fn tool_bar(
+fn tool_rail(
     ctx: &egui::Context,
     view: &mut View,
     clipboard: &Clipboard,
@@ -597,31 +596,60 @@ fn tool_bar(
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    egui::TopBottomPanel::top("tools")
-        .exact_height(45.0)
-        .frame(frame(TOOLBAR).inner_margin(egui::Margin::symmetric(11, 7)))
+    egui::SidePanel::left("primary tools")
+        .exact_width(56.0)
+        .resizable(false)
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(8, 12)))
         .show(ctx, |ui| {
-            horizontal_strip(ui, |ui| {
-                if view.stream.is_none() {
-                    return;
-                }
-                if view.paste.locks_preview() {
-                    ui.label(egui::RichText::new(lang.text(Text::Placement)).color(MUTED));
-                } else if let Some(preview) = &mut view.preview {
-                    ui.add_enabled_ui(!busy, |ui| {
-                        tool_bar_placement(ui, preview, lang, actions);
-                    });
-                    view.air_mode = preview.mode;
-                } else {
-                    ui.add_enabled_ui(!busy, |ui| {
-                        tool_bar_editing(ui, view, clipboard, captured, lang, actions);
-                    });
+            ui.vertical_centered(|ui| {
+                ui.spacing_mut().item_spacing.y = 7.0;
+                let active = tools_context(view);
+                let has_world = view.stream.is_some();
+                let enabled = has_world && !busy && !captured && !view.paste.locks_preview();
+                for (mode, icon, label, available) in [
+                    (EditorContext::Explore, Icon::Pointer, Text::Explore, true),
+                    (EditorContext::Select, Icon::Selection, Text::Select, true),
+                    (
+                        EditorContext::Place,
+                        Icon::Place,
+                        Text::PreviewButton,
+                        clipboard.current.is_some(),
+                    ),
+                ] {
+                    let selected = mode == active && (has_world || view.demo_scene.is_some());
+                    if appearance::button(
+                        ui,
+                        Some(icon),
+                        "",
+                        lang.text(label),
+                        ButtonStyle::Mode(selected),
+                        enabled && available,
+                    )
+                    .clicked()
+                        && mode != active
+                    {
+                        choose_mode(view, mode, actions);
+                    }
                 }
             });
         });
 }
 
-fn tool_bar_editing(
+fn choose_mode(view: &mut View, mode: EditorContext, actions: &mut WindowActions) {
+    if mode == EditorContext::Place {
+        actions.editor = Some((Action::StartPaste, None));
+    } else {
+        view.selecting = mode == EditorContext::Select;
+        if !view.selecting {
+            stop_marking(&mut view.selection);
+        }
+        if view.preview.is_some() {
+            actions.editor = Some((Action::CancelPaste, None));
+        }
+    }
+}
+
+fn selection_actions(
     ui: &mut egui::Ui,
     view: &mut View,
     clipboard: &Clipboard,
@@ -629,34 +657,7 @@ fn tool_bar_editing(
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    let explore = lang.text(Text::Explore);
-    let select = lang.text(Text::Select);
-    if appearance::button(
-        ui,
-        Some(Icon::Pointer),
-        explore,
-        explore,
-        ButtonStyle::Toggle(!view.selecting),
-        true,
-    )
-    .clicked()
-    {
-        view.selecting = false;
-    }
-    if appearance::button(
-        ui,
-        Some(Icon::Selection),
-        select,
-        select,
-        ButtonStyle::Toggle(view.selecting),
-        true,
-    )
-    .clicked()
-    {
-        view.selecting = true;
-    }
-    ui.separator();
-    if view.selecting {
+    ui.horizontal_wrapped(|ui| {
         if appearance::button(
             ui,
             Some(Icon::Target),
@@ -707,94 +708,83 @@ fn tool_bar_editing(
         {
             actions.editor = Some((Action::Copy, None));
         }
-        ui.separator();
-    } else {
-        stop_marking(&mut view.selection);
-    }
-    if appearance::button(
-        ui,
-        Some(Icon::Clipboard),
-        lang.text(Text::PreviewTool),
-        lang.text(Text::PreviewButton),
-        ButtonStyle::Tool,
-        action_enabled(Action::StartPaste, view, clipboard, captured),
-    )
-    .clicked()
-    {
-        actions.editor = Some((Action::StartPaste, None));
-    }
+    });
 }
 
-fn tool_bar_placement(
+fn placement_actions(
     ui: &mut egui::Ui,
     preview: &mut Placement,
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    for (mode, text, help) in [
-        (AirMode::Include, Text::IncludeAir, Text::IncludeAirHelp),
-        (AirMode::Ignore, Text::IgnoreAir, Text::IgnoreAirHelp),
-    ] {
+    ui.horizontal_wrapped(|ui| {
+        for (mode, text, help) in [
+            (AirMode::Include, Text::IncludeAir, Text::IncludeAirHelp),
+            (AirMode::Ignore, Text::IgnoreAir, Text::IgnoreAirHelp),
+        ] {
+            if appearance::button(
+                ui,
+                None,
+                lang.text(text),
+                lang.text(help),
+                ButtonStyle::Toggle(preview.mode == mode),
+                true,
+            )
+            .clicked()
+            {
+                preview.mode = mode;
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        for (track, icon, key, help) in [
+            (true, Icon::Target, Text::FollowTool, Text::Follow),
+            (false, Icon::Pin, Text::PreciseTool, Text::Precise),
+        ] {
+            let label = lang.text(key);
+            if appearance::button(
+                ui,
+                Some(icon),
+                label,
+                lang.text(help),
+                ButtonStyle::Toggle(preview.moving == track),
+                true,
+            )
+            .clicked()
+                && preview.moving != track
+            {
+                preview.moving = track;
+                preview.target_valid = !track;
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let prepare = lang.text(Text::PrepareTool);
         if appearance::button(
             ui,
             None,
-            lang.text(text),
-            lang.text(help),
-            ButtonStyle::Toggle(preview.mode == mode),
-            true,
+            prepare,
+            lang.text(Text::PreparePaste),
+            ButtonStyle::Tool,
+            preview.target_valid,
         )
         .clicked()
         {
-            preview.mode = mode;
+            actions.paste = Some(PasteAction::Prepare);
         }
-    }
-    ui.separator();
-    for (track, icon, key, help) in [
-        (true, Icon::Target, Text::FollowTool, Text::Follow),
-        (false, Icon::Pin, Text::PreciseTool, Text::Precise),
-    ] {
-        let label = lang.text(key);
         if appearance::button(
             ui,
-            Some(icon),
-            label,
-            lang.text(help),
-            ButtonStyle::Toggle(preview.moving == track),
+            Some(Icon::Close),
+            lang.text(Text::ActionCancel),
+            lang.text(Text::CancelPreview),
+            ButtonStyle::Quiet,
             true,
         )
         .clicked()
-            && preview.moving != track
         {
-            preview.moving = track;
-            preview.target_valid = !track;
+            actions.editor = Some((Action::CancelPaste, None));
         }
-    }
-    ui.separator();
-    let prepare = lang.text(Text::PrepareTool);
-    if appearance::button(
-        ui,
-        None,
-        prepare,
-        lang.text(Text::PreparePaste),
-        ButtonStyle::Tool,
-        preview.target_valid,
-    )
-    .clicked()
-    {
-        actions.paste = Some(PasteAction::Prepare);
-    }
-    if appearance::button(
-        ui,
-        Some(Icon::Close),
-        "",
-        lang.text(Text::CancelPreview),
-        ButtonStyle::Quiet,
-        true,
-    )
-    .clicked()
-    {
-        actions.editor = Some((Action::CancelPaste, None));
-    }
+    });
 }
 
 fn horizontal_strip(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
@@ -966,6 +956,7 @@ fn inspector(
     name: &str,
     position: Vec3,
     busy: bool,
+    captured: bool,
     clipboard: &Clipboard,
     lang: Language,
     actions: &mut WindowActions,
@@ -993,12 +984,17 @@ fn inspector(
         }
         if !paste_locked {
             if let Some(preview) = &mut view.preview {
+                placement_actions(ui, preview, lang, actions);
+                view.air_mode = preview.mode;
+                ui.add_space(4.0);
                 let recalculating = view
                     .stream
                     .as_ref()
                     .is_some_and(|stream| stream.preview_busy());
                 preview_controls(ui, preview, recalculating, lang);
             } else if view.selecting {
+                selection_actions(ui, view, clipboard, captured, lang, actions);
+                ui.add_space(4.0);
                 selection_details(ui, &mut view.selection, position, lang);
             }
         }

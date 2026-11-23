@@ -51,7 +51,6 @@ catalog! {
     ClipboardBlocks => "{0} bloques, incluido el aire", "{0} blocks, including air";
     ClipboardEntity => "{0} entidad de bloque", "{0} block entity";
     ClipboardEntities => "{0} entidades de bloque", "{0} block entities";
-    PreviewTool => "Previsualizar", "Preview";
     PreviewButton => "Previsualizar pegado", "Preview paste";
     LoadingTerrain => "Cargando terreno…", "Loading terrain…";
     EmptyTerrain => "No hay terreno generado cerca", "No generated terrain nearby";

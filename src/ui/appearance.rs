@@ -117,6 +117,7 @@ pub(super) enum Icon {
     Close,
     Pointer,
     Selection,
+    Place,
     Copy,
     Clipboard,
     Target,
@@ -180,6 +181,20 @@ impl Icon {
                     path(&[[x + 4. * sx, y], [x, y], [x, y + 4. * sy]]);
                 }
             }
+            Self::Place => {
+                path(&[
+                    [1.5, 8.],
+                    [8., 11.5],
+                    [14.5, 8.],
+                    [14.5, 11.5],
+                    [8., 15.],
+                    [1.5, 11.5],
+                    [1.5, 8.],
+                ]);
+                path(&[[8., 11.5], [8., 15.]]);
+                path(&[[8., 1.], [8., 8.]]);
+                path(&[[5.5, 5.5], [8., 8.], [10.5, 5.5]]);
+            }
             Self::Copy => {
                 path(&[[2., 10.], [2., 2.], [10., 2.]]);
                 outline(p(5., 5.), p(14., 14.), 1.5_f32);
@@ -237,6 +252,7 @@ pub(super) enum ButtonStyle {
     Primary,
     Tool,
     Toggle(bool),
+    Mode(bool),
     Quiet,
 }
 
@@ -257,19 +273,25 @@ pub(super) fn button(
     } else {
         0.0
     };
-    let icon_width = if icon.is_some() { 15.0 } else { 0.0 };
-    let mut response = ui
-        .add_enabled_ui(enabled, |ui| {
-            ui.allocate_exact_size(
-                vec2((galley.size().x + gap + icon_width + 16.0).max(27.0), 28.0),
-                Sense::click(),
-            )
-        })
-        .inner
-        .1;
-    let selected = matches!(style, ButtonStyle::Toggle(true));
+    let mode = matches!(style, ButtonStyle::Mode(_));
+    let icon_width = if icon.is_none() {
+        0.0
+    } else if mode {
+        20.0
+    } else {
+        15.0
+    };
+    let size = if mode {
+        vec2(38.0, 38.0)
+    } else {
+        vec2((galley.size().x + gap + icon_width + 16.0).max(27.0), 28.0)
+    };
+    let mut response = ui.add_enabled(enabled, |ui: &mut Ui| {
+        ui.allocate_exact_size(size, Sense::click()).1
+    });
+    let selected = matches!(style, ButtonStyle::Toggle(true) | ButtonStyle::Mode(true));
     response.widget_info(|| {
-        if matches!(style, ButtonStyle::Toggle(_)) {
+        if mode || matches!(style, ButtonStyle::Toggle(_)) {
             WidgetInfo::selected(
                 WidgetType::SelectableLabel,
                 enabled,
@@ -289,6 +311,7 @@ pub(super) fn button(
         selected,
         style,
     ) {
+        (false, _, _, _, true, ButtonStyle::Mode(_)) => SELECTED,
         (false, ..) => Color32::TRANSPARENT,
         (_, true, _, true, _, _) => Color32::from_rgb(149, 225, 211),
         (_, true, ..) => ACCENT,
@@ -298,7 +321,9 @@ pub(super) fn button(
         (_, _, _, _, _, ButtonStyle::Tool) => PANEL,
         _ => Color32::TRANSPARENT,
     };
-    let text = if !enabled {
+    let text = if selected && mode {
+        ACCENT
+    } else if !enabled {
         DIM
     } else if primary {
         BAR
@@ -307,7 +332,7 @@ pub(super) fn button(
     } else {
         TEXT
     };
-    let stroke = if response.has_focus() || selected {
+    let stroke = if response.has_focus() || (selected && !mode) {
         Stroke::new(1.0_f32, ACCENT)
     } else if enabled && matches!(style, ButtonStyle::Tool) {
         Stroke::new(1.0_f32, LINE)
@@ -316,11 +341,21 @@ pub(super) fn button(
     };
     let rect = response.rect;
     ui.painter().rect(rect, 6, fill, stroke, StrokeKind::Inside);
+    if mode && selected {
+        ui.painter().rect_filled(
+            Rect::from_center_size(pos2(rect.left() - 4.0, rect.center().y), vec2(2.5, 19.0)),
+            1,
+            ACCENT,
+        );
+    }
     let mut x = rect.left() + (rect.width() - galley.size().x - gap - icon_width) / 2.0;
     if let Some(icon) = icon {
         icon.paint(
             ui.painter(),
-            Rect::from_min_size(pos2(x, rect.center().y - 7.5), vec2(15.0, 15.0)),
+            Rect::from_min_size(
+                pos2(x, rect.center().y - icon_width * 0.5),
+                vec2(icon_width, icon_width),
+            ),
             text,
         );
         x += icon_width + gap;
@@ -331,7 +366,9 @@ pub(super) fn button(
         text,
     );
     if !accessible_name.is_empty() && accessible_name != label {
-        response = response.on_hover_text(accessible_name);
+        response = response
+            .on_hover_text(accessible_name)
+            .on_disabled_hover_text(accessible_name);
     }
     response
 }
@@ -419,6 +456,43 @@ pub(super) fn tab_text(ui: &Ui, icon_rect: Rect, galley: Arc<egui::Galley>, acti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn styled_buttons_wrap_within_a_narrow_inspector() {
+        let context = egui::Context::default();
+        apply(&context);
+        let _ = context.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(184.0, 150.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let right = ui.max_rect().right();
+                    ui.horizontal_wrapped(|ui| {
+                        let cursor = button(
+                            ui,
+                            Some(Icon::Target),
+                            "Cursor",
+                            "Cursor",
+                            ButtonStyle::Toggle(false),
+                            true,
+                        );
+                        let coords = button(
+                            ui,
+                            Some(Icon::Pin),
+                            "Coordinates",
+                            "Coordinates",
+                            ButtonStyle::Toggle(true),
+                            true,
+                        );
+                        assert!(coords.rect.top() >= cursor.rect.bottom());
+                        assert!(coords.rect.right() <= right);
+                    });
+                });
+            },
+        );
+    }
 
     #[test]
     fn styled_buttons_preserve_keyboard_activation_and_respect_disabled_state() {
