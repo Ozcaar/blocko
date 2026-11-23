@@ -66,7 +66,6 @@ catalog! {
     PickCorner => "Marca la esquina {0} en un bloque del visor.", "Mark corner {0} on a block in the viewport.";
     CancelMark => "Cancelar marca", "Cancel marking";
     PickMiss => "Acerca la cámara y elige un bloque visible.", "Move closer and choose a visible block.";
-    ClearTool => "Limpiar", "Clear";
     ClearSelection => "Limpiar selección", "Clear selection";
     Dimensions => "{0} × {1} × {2} bloques", "{0} × {1} × {2} blocks";
     CopyButton => "Copiar volumen", "Copy volume";
@@ -84,6 +83,7 @@ catalog! {
     BackupBeforeWrite => "Se creará un respaldo antes de escribir.", "Blocko will create a backup before writing.";
     ReturnToPreview => "Volver a la vista previa", "Return to preview";
     ConfirmPaste => "Confirmar pegado", "Confirm paste";
+    PrepareTool => "Preparar", "Prepare";
     PreparePaste => "Preparar pegado", "Prepare paste";
     Backup => "Respaldo", "Backup";
     CloseNotice => "Cerrar aviso", "Dismiss notice";
@@ -95,12 +95,15 @@ catalog! {
     IgnoreAir => "Sin aire", "Without air";
     IncludeAirHelp => "El aire de la copia vacía esos bloques del destino.", "Air in the copy clears those blocks in the destination.";
     IgnoreAirHelp => "Los huecos conservan los bloques del destino.", "Gaps preserve the destination blocks.";
+    PasteSource => "Origen de la copia", "Clipboard source";
     Origin => "Origen de pegado (esquina mínima)", "Paste origin (minimum corner)";
+    FollowTool => "Cursor", "Cursor";
     Follow => "Seguir cursor", "Follow cursor";
+    PreciseTool => "Coordenadas", "Coordinates";
     Precise => "Fijar coordenadas", "Pin coordinates";
     NoPasteTarget => "Apunta a una cara visible del terreno o fija las coordenadas.", "Point at a visible terrain face or pin the coordinates.";
     PreviewUpdating => "Actualizando vista previa…", "Updating preview…";
-    PreviewDestination => "Previsualizando en {0}", "Previewing in {0}";
+    PreviewDestination => "Vista previa · {0}", "Preview · {0}";
     CancelPreview => "Cancelar vista previa", "Cancel preview";
     CameraLook => "Mirar", "Look";
     CameraMove => "Mover", "Move";
@@ -113,7 +116,9 @@ catalog! {
     ActionRepeat => "Repetir", "Repeat";
     ActionCancel => "Cancelar", "Cancel";
     ActionMark => "Marcar esquina", "Mark corner";
+    KeyLeftClickShort => "Clic izq.", "Left click";
     KeyLeftClick => "Clic izquierdo", "Left click";
+    KeyRightClickShort => "Botón der.", "Right mouse";
     KeyRightClick => "Botón derecho", "Right mouse";
     KeyMiddleClick => "Botón central", "Middle mouse";
     KeyMouse4 => "Botón 4", "Mouse 4";

@@ -27,23 +27,13 @@ use crate::{
     structure::{Clipboard, CopyNotice, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y},
 };
 
-const BAR: egui::Color32 = egui::Color32::from_rgb(20, 27, 32);
-const PANEL: egui::Color32 = egui::Color32::from_rgb(25, 34, 39);
-const LINE: egui::Color32 = egui::Color32::from_rgb(47, 62, 67);
-const TEXT: egui::Color32 = egui::Color32::from_rgb(229, 238, 235);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(151, 174, 174);
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(112, 224, 178);
-const ALERT: egui::Color32 = egui::Color32::from_rgb(244, 180, 112);
+mod appearance;
+
+use appearance::{ACCENT, ALERT, BAR, ButtonStyle, FIELD, Icon, LINE, MUTED, PANEL, TEXT, TOOLBAR};
 
 pub fn context() -> EguiContext {
     let mut context = EguiContext::default();
-    let mut visuals = egui::Visuals::dark();
-    visuals.widgets.inactive.bg_fill = PANEL;
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, LINE);
-    visuals.widgets.hovered.bg_fill = LINE;
-    visuals.selection.bg_fill = egui::Color32::from_rgb(29, 95, 74);
-    visuals.override_text_color = Some(TEXT);
-    context.get_mut().set_visuals(visuals);
+    appearance::apply(context.get_mut());
     context
 }
 
@@ -261,7 +251,7 @@ pub fn draw(
         let clear = if viewport.is_some() {
             ClearColorConfig::None
         } else {
-            ClearColorConfig::Custom(Color::srgb_u8(25, 34, 39))
+            ClearColorConfig::Custom(Color::srgb_u8(FIELD.r(), FIELD.g(), FIELD.b()))
         };
         overlay_camera.clear_color = clear;
         if let Some(selected) = result.language {
@@ -439,29 +429,21 @@ fn window_ui(
     if !tabs.is_empty() {
         tab_bar(ctx, window, workspace, tabs, busy, lang, &mut actions);
     }
-    tool_bar(ctx, view, clipboard, busy, captured, lang, &mut actions);
+    if name.is_some() || view.demo_scene.is_some() {
+        tool_bar(ctx, view, clipboard, busy, captured, lang, &mut actions);
+    }
     status_bar(
         ctx, workspace, view, position, captured, clipboard, lang, bindings,
     );
 
     if name.is_none() && view.demo_scene.is_none() {
-        egui::CentralPanel::default()
-            .frame(frame(PANEL))
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space((ui.available_height() * 0.25).min(155.0));
-                    ui.heading(lang.text(Text::EmptyTitle));
-                    ui.label(egui::RichText::new(lang.text(Text::EmptyHelp)).color(MUTED));
-                    ui.add_space(8.0);
-                    opening_notice(ui, workspace, lang);
-                });
-            });
+        empty_workspace(ctx, workspace, busy, lang, &mut actions);
     } else {
-        let width = (ctx.content_rect().width() * 0.23).clamp(182.0, 278.0);
+        let width = (ctx.content_rect().width() * 0.235).clamp(194.0, 298.0);
         egui::SidePanel::right("inspector")
             .exact_width(width)
             .resizable(false)
-            .frame(frame(PANEL))
+            .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(13, 14)))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(workspace.active)
@@ -499,6 +481,62 @@ fn window_ui(
     actions
 }
 
+fn empty_workspace(
+    ctx: &egui::Context,
+    workspace: &mut Workspace,
+    busy: bool,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    egui::CentralPanel::default()
+        .frame(frame(FIELD).inner_margin(egui::Margin::same(20)))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(((ui.available_height() - 338.0) * 0.43).max(8.0));
+                    let width = ui.available_width().min(396.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, 0.0),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            appearance::card()
+                                .fill(PANEL)
+                                .inner_margin(egui::Margin::same(23))
+                                .show(ui, |ui| {
+                                    ui.set_width(width - 48.0);
+                                    appearance::empty_illustration(ui);
+                                    ui.add_space(9.0);
+                                    appearance::headline(ui, lang.text(Text::EmptyTitle), 24.0);
+                                    ui.label(
+                                        egui::RichText::new(lang.text(Text::EmptyHelp))
+                                            .color(MUTED),
+                                    );
+                                    ui.add_space(9.0);
+                                    let label = lang.text(Text::OpenWorld);
+                                    if appearance::button(
+                                        ui,
+                                        Some(Icon::Folder),
+                                        label,
+                                        label,
+                                        ButtonStyle::Primary,
+                                        !busy,
+                                    )
+                                    .clicked()
+                                    {
+                                        actions.open = Some(Destination::Tab);
+                                    }
+                                    if workspace.notice.is_some() {
+                                        ui.add_space(7.0);
+                                        opening_notice(ui, workspace, lang);
+                                    }
+                                });
+                        },
+                    );
+                });
+            });
+        });
+}
+
 fn menu_bar(
     ctx: &egui::Context,
     busy: bool,
@@ -507,15 +545,15 @@ fn menu_bar(
     actions: &mut WindowActions,
 ) {
     egui::TopBottomPanel::top("menu")
-        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(10, 4)))
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(12, 6)))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Blocko")
-                        .size(17.0)
-                        .strong()
-                        .color(ACCENT),
-                );
+                let (logo, _) =
+                    ui.allocate_exact_size(egui::vec2(27.0, 27.0), egui::Sense::hover());
+                ui.painter().rect_filled(logo, 7, TOOLBAR);
+                Icon::Cube.paint(ui.painter(), logo.shrink(5.0), ACCENT);
+                appearance::headline(ui, "Blocko", 18.0);
+                ui.add_space(6.0);
                 ui.separator();
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.menu_button(lang.text(Text::WorldMenu), |ui| {
@@ -560,23 +598,13 @@ fn tool_bar(
     actions: &mut WindowActions,
 ) {
     egui::TopBottomPanel::top("tools")
-        .exact_height(36.0)
-        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(9, 4)))
+        .exact_height(45.0)
+        .frame(frame(TOOLBAR).inner_margin(egui::Margin::symmetric(11, 7)))
         .show(ctx, |ui| {
             horizontal_strip(ui, |ui| {
-                let open_label = lang.text(Text::OpenWorld);
-                let open_button = if view.stream.is_none() {
-                    accent_button(open_label)
-                } else {
-                    egui::Button::new(open_label)
-                };
-                if ui.add_enabled(!busy, open_button).clicked() {
-                    actions.open = Some(Destination::Tab);
-                }
                 if view.stream.is_none() {
                     return;
                 }
-                ui.separator();
                 if view.paste.locks_preview() {
                     ui.label(egui::RichText::new(lang.text(Text::Placement)).color(MUTED));
                 } else if let Some(preview) = &mut view.preview {
@@ -601,38 +629,81 @@ fn tool_bar_editing(
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    ui.selectable_value(&mut view.selecting, false, lang.text(Text::Explore));
-    ui.selectable_value(&mut view.selecting, true, lang.text(Text::Select));
+    let explore = lang.text(Text::Explore);
+    let select = lang.text(Text::Select);
+    if appearance::button(
+        ui,
+        Some(Icon::Pointer),
+        explore,
+        explore,
+        ButtonStyle::Toggle(!view.selecting),
+        true,
+    )
+    .clicked()
+    {
+        view.selecting = false;
+    }
+    if appearance::button(
+        ui,
+        Some(Icon::Selection),
+        select,
+        select,
+        ButtonStyle::Toggle(view.selecting),
+        true,
+    )
+    .clicked()
+    {
+        view.selecting = true;
+    }
     ui.separator();
     if view.selecting {
-        if ui
-            .button(lang.text(Text::PickBothTool))
-            .on_hover_text(lang.text(Text::PickBoth))
-            .clicked()
+        if appearance::button(
+            ui,
+            Some(Icon::Target),
+            lang.text(Text::PickBothTool),
+            lang.text(Text::PickBoth),
+            ButtonStyle::Tool,
+            true,
+        )
+        .clicked()
         {
             arm_pick(&mut view.selection, 0, true);
         }
         if view.selection.picking.is_some() {
-            if ui.button(lang.text(Text::CancelMark)).clicked() {
+            let label = lang.text(Text::CancelMark);
+            if appearance::button(
+                ui,
+                Some(Icon::Close),
+                label,
+                label,
+                ButtonStyle::Quiet,
+                true,
+            )
+            .clicked()
+            {
                 stop_marking(&mut view.selection);
             }
-        } else if ui
-            .add_enabled(
-                view.selection.corners.iter().any(Option::is_some),
-                egui::Button::new(lang.text(Text::ClearTool)),
-            )
-            .on_hover_text(lang.text(Text::ClearSelection))
-            .clicked()
+        } else if appearance::button(
+            ui,
+            Some(Icon::Trash),
+            "",
+            lang.text(Text::ClearSelection),
+            ButtonStyle::Quiet,
+            view.selection.corners.iter().any(Option::is_some),
+        )
+        .clicked()
         {
             view.selection = Selection::default();
         }
-        if ui
-            .add_enabled(
-                action_enabled(Action::Copy, view, clipboard, captured),
-                egui::Button::new(lang.text(Text::ActionCopy)),
-            )
-            .on_hover_text(lang.text(Text::CopyButton))
-            .clicked()
+        if appearance::button(
+            ui,
+            Some(Icon::Copy),
+            lang.text(Text::ActionCopy),
+            lang.text(Text::CopyButton),
+            ButtonStyle::Tool,
+            action_enabled(Action::Copy, view, clipboard, captured),
+        )
+        .clicked()
         {
             actions.editor = Some((Action::Copy, None));
         }
@@ -640,13 +711,15 @@ fn tool_bar_editing(
     } else {
         stop_marking(&mut view.selection);
     }
-    if ui
-        .add_enabled(
-            action_enabled(Action::StartPaste, view, clipboard, captured),
-            egui::Button::new(lang.text(Text::PreviewTool)),
-        )
-        .on_hover_text(lang.text(Text::PreviewButton))
-        .clicked()
+    if appearance::button(
+        ui,
+        Some(Icon::Clipboard),
+        lang.text(Text::PreviewTool),
+        lang.text(Text::PreviewButton),
+        ButtonStyle::Tool,
+        action_enabled(Action::StartPaste, view, clipboard, captured),
+    )
+    .clicked()
     {
         actions.editor = Some((Action::StartPaste, None));
     }
@@ -658,49 +731,67 @@ fn tool_bar_placement(
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    ui.selectable_value(
-        &mut preview.mode,
-        AirMode::Include,
-        lang.text(Text::IncludeAir),
-    )
-    .on_hover_text(lang.text(Text::IncludeAirHelp));
-    ui.selectable_value(
-        &mut preview.mode,
-        AirMode::Ignore,
-        lang.text(Text::IgnoreAir),
-    )
-    .on_hover_text(lang.text(Text::IgnoreAirHelp));
-    ui.separator();
-    if ui
-        .selectable_label(preview.moving, lang.text(Text::Follow))
-        .clicked()
-        && !preview.moving
-    {
-        preview.moving = true;
-        preview.target_valid = false;
-    }
-    if ui
-        .selectable_label(!preview.moving, lang.text(Text::Precise))
-        .clicked()
-        && preview.moving
-    {
-        preview.moving = false;
-        preview.target_valid = true;
-    }
-    ui.separator();
-    if ui
-        .add_enabled(
-            preview.target_valid,
-            egui::Button::new(lang.text(Text::PreparePaste)),
+    for (mode, text, help) in [
+        (AirMode::Include, Text::IncludeAir, Text::IncludeAirHelp),
+        (AirMode::Ignore, Text::IgnoreAir, Text::IgnoreAirHelp),
+    ] {
+        if appearance::button(
+            ui,
+            None,
+            lang.text(text),
+            lang.text(help),
+            ButtonStyle::Toggle(preview.mode == mode),
+            true,
         )
         .clicked()
+        {
+            preview.mode = mode;
+        }
+    }
+    ui.separator();
+    for (track, icon, key, help) in [
+        (true, Icon::Target, Text::FollowTool, Text::Follow),
+        (false, Icon::Pin, Text::PreciseTool, Text::Precise),
+    ] {
+        let label = lang.text(key);
+        if appearance::button(
+            ui,
+            Some(icon),
+            label,
+            lang.text(help),
+            ButtonStyle::Toggle(preview.moving == track),
+            true,
+        )
+        .clicked()
+            && preview.moving != track
+        {
+            preview.moving = track;
+            preview.target_valid = !track;
+        }
+    }
+    ui.separator();
+    let prepare = lang.text(Text::PrepareTool);
+    if appearance::button(
+        ui,
+        None,
+        prepare,
+        lang.text(Text::PreparePaste),
+        ButtonStyle::Tool,
+        preview.target_valid,
+    )
+    .clicked()
     {
         actions.paste = Some(PasteAction::Prepare);
     }
-    if ui
-        .button(lang.text(Text::ActionCancel))
-        .on_hover_text(lang.text(Text::CancelPreview))
-        .clicked()
+    if appearance::button(
+        ui,
+        Some(Icon::Close),
+        "",
+        lang.text(Text::CancelPreview),
+        ButtonStyle::Quiet,
+        true,
+    )
+    .clicked()
     {
         actions.editor = Some((Action::CancelPaste, None));
     }
@@ -719,10 +810,6 @@ fn horizontal_strip(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
         });
 }
 
-fn accent_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(egui::RichText::new(label).color(egui::Color32::BLACK)).fill(ACCENT)
-}
-
 fn tab_bar(
     ctx: &egui::Context,
     window: &Window,
@@ -733,54 +820,47 @@ fn tab_bar(
     actions: &mut WindowActions,
 ) {
     egui::TopBottomPanel::top("tabs")
-        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(8, 3)))
+        .exact_height(38.0)
+        .frame(frame(BAR).inner_margin(egui::Margin {
+            left: 11,
+            right: 11,
+            top: 4,
+            bottom: 0,
+        }))
         .show(ctx, |ui| {
-            egui::ScrollArea::horizontal()
-                .auto_shrink([false, true])
-                .scroll_source(egui::scroll_area::ScrollSource {
-                    drag: false,
-                    ..Default::default()
-                })
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for (tab, name, path) in tabs {
-                            ui.push_id(*tab, |ui| {
-                                let label =
-                                    egui::RichText::new(name).color(if *tab == workspace.active {
-                                        ACCENT
-                                    } else {
-                                        TEXT
-                                    });
-                                let response = ui
-                                    .add_enabled(
-                                        !busy,
-                                        egui::Button::new(label)
-                                            .truncate()
-                                            .selected(*tab == workspace.active)
-                                            .sense(egui::Sense::click_and_drag()),
-                                    )
-                                    .on_hover_ui(|ui| {
-                                        ui.label(lang.text(Text::DragTab));
-                                        ui.monospace(path.display().to_string());
-                                    });
-                                if response.clicked() {
-                                    actions.tab = Some((*tab, TabAction::Activate));
-                                }
-                                if response.drag_started_by(egui::PointerButton::Primary) {
-                                    workspace.dragging = Some(*tab);
-                                }
-                                if ui
-                                    .add_enabled(!busy, egui::Button::new("×").small())
-                                    .on_hover_text(lang.text(Text::CloseTab))
-                                    .clicked()
-                                {
-                                    actions.tab = Some((*tab, TabAction::Close));
-                                }
-                                ui.separator();
-                            });
+            horizontal_strip(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (tab, name, path) in tabs {
+                    ui.push_id(*tab, |ui| {
+                        let active = *tab == workspace.active;
+                        let (label, close) = world_tab(ui, name, active, busy, lang);
+                        let label = label.on_hover_ui(|ui| {
+                            appearance::headline(ui, name, 14.0);
+                            ui.label(lang.text(Text::DragTab));
+                            ui.label(
+                                egui::RichText::new(path.display().to_string())
+                                    .monospace()
+                                    .color(MUTED),
+                            );
+                        });
+                        if label.clicked() {
+                            actions.tab = Some((*tab, TabAction::Activate));
+                        }
+                        if label.drag_started_by(egui::PointerButton::Primary) {
+                            workspace.dragging = Some(*tab);
+                        }
+                        if close.clicked() {
+                            actions.tab = Some((*tab, TabAction::Close));
                         }
                     });
-                });
+                }
+                let label = lang.text(Text::OpenWorld);
+                if appearance::button(ui, Some(Icon::Plus), "", label, ButtonStyle::Quiet, !busy)
+                    .clicked()
+                {
+                    actions.open = Some(Destination::Tab);
+                }
+            });
         });
     if let Some(tab) = workspace.dragging {
         let (released, position) = ctx.input(|input| {
@@ -819,6 +899,67 @@ fn tab_bar(
     }
 }
 
+fn world_tab(
+    ui: &mut egui::Ui,
+    name: &str,
+    active: bool,
+    busy: bool,
+    lang: Language,
+) -> (egui::Response, egui::Response) {
+    let mut job = egui::text::LayoutJob::simple(
+        name.to_owned(),
+        appearance::strong(13.0),
+        egui::Color32::PLACEHOLDER,
+        145.0,
+    );
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let text = ui.painter().layout_job(job);
+    let (id, rect) = ui.allocate_space(egui::vec2((text.size().x + 67.0).max(110.0), 32.0));
+    let close_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 15.0, rect.center().y),
+        egui::vec2(23.0, 23.0),
+    );
+    let main_rect =
+        egui::Rect::from_min_max(rect.min, egui::pos2(close_rect.left(), rect.bottom()));
+    let (label, close) = ui
+        .add_enabled_ui(!busy, |ui| {
+            (
+                ui.interact(main_rect, id.with("world"), egui::Sense::click_and_drag()),
+                ui.interact(close_rect, id.with("close"), egui::Sense::click()),
+            )
+        })
+        .inner;
+    let close_text = lang.text(Text::CloseTab);
+    label.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, !busy, active, name)
+    });
+    close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !busy, close_text));
+    appearance::tab_decoration(ui, rect, active, label.hovered() || close.hovered());
+    if label.has_focus() {
+        ui.painter().rect_stroke(
+            main_rect.shrink(2.0),
+            5,
+            egui::Stroke::new(1.0_f32, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 18.0, rect.center().y),
+        egui::vec2(15.0, 15.0),
+    );
+    appearance::tab_text(ui, icon_rect, text, active);
+    if close.hovered() || close.has_focus() {
+        ui.painter().rect_filled(close_rect, 5, LINE);
+    }
+    Icon::Close.paint(
+        ui.painter(),
+        close_rect.shrink(4.5),
+        if close.hovered() { TEXT } else { MUTED },
+    );
+    (label, close.on_hover_text(close_text))
+}
+
 fn inspector(
     ui: &mut egui::Ui,
     view: &mut View,
@@ -829,8 +970,13 @@ fn inspector(
     lang: Language,
     actions: &mut WindowActions,
 ) {
+    world_heading(ui, name);
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(6.0);
     let paste_locked = view.paste.locks_preview();
-    let section = if view.preview.is_some() || paste_locked {
+    let placing = view.preview.is_some() || paste_locked;
+    let section = if placing {
         Some(Text::Placement)
     } else if view.selecting {
         Some(Text::Select)
@@ -838,7 +984,7 @@ fn inspector(
         None
     };
     if let Some(section) = section {
-        ui.heading(lang.text(section));
+        appearance::headline(ui, lang.text(section), 17.0);
         ui.add_space(4.0);
     }
     ui.add_enabled_ui(!busy, |ui| {
@@ -860,9 +1006,48 @@ fn inspector(
     if let Some(CopyNotice::Error(error)) = &view.copy_notice {
         diagnostic(ui, &lang.format(Text::CopyFailed, &[&name]), error, lang);
     }
-    ui.add_space(5.0);
-    ui.collapsing(lang.text(Text::Clipboard), |ui| {
-        clipboard_contents(ui, clipboard, lang)
+    if section.is_some() || !matches!(view.paste, PasteState::Idle) {
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+    }
+    egui::CollapsingHeader::new(
+        egui::RichText::new(lang.text(Text::Clipboard)).font(appearance::strong(14.0)),
+    )
+    .id_salt(("clipboard", placing))
+    .default_open(!placing)
+    .show_unindented(ui, |ui| {
+        inspector_card(ui, |ui| clipboard_contents(ui, clipboard, lang));
+    });
+}
+
+fn inspector_card<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    appearance::card()
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            contents(ui)
+        })
+        .inner
+}
+
+fn world_heading(ui: &mut egui::Ui, name: &str) {
+    ui.horizontal(|ui| {
+        let (icon, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+        ui.painter().rect_filled(icon, 8, TOOLBAR);
+        Icon::Cube.paint(ui.painter(), icon.shrink(8.0), ACCENT);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(name)
+                        .font(appearance::strong(19.0))
+                        .color(TEXT),
+                )
+                .truncate(),
+            )
+            .on_hover_text(name);
+            ui.label(egui::RichText::new("Overworld").small().color(MUTED));
+        });
     });
 }
 
@@ -981,14 +1166,15 @@ fn status_bar(
 ) {
     let busy = workspace.pending.is_some() || view.paste.writes();
     let scene = view.stream.is_some() || view.demo_scene.is_some();
+    let compact = ctx.content_rect().width() < 640.0;
     command_strip(ctx, |ui| {
         if scene && !busy && !input_blocked(ctx) {
-            help_bar(ui, view, captured, clipboard, lang, bindings);
+            help_bar(ui, view, captured, clipboard, lang, bindings, compact);
         }
     });
     egui::TopBottomPanel::bottom("status")
-        .exact_height(25.0)
-        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(9, 4)))
+        .exact_height(26.0)
+        .frame(frame(BAR).inner_margin(egui::Margin::symmetric(11, 3)))
         .show(ctx, |ui| {
             let notice = status_notice(workspace, view, lang);
             if scene || notice.is_some() {
@@ -1042,7 +1228,7 @@ fn status_bar(
 fn command_strip(ctx: &egui::Context, contents: impl FnOnce(&mut egui::Ui)) {
     egui::TopBottomPanel::bottom("contextual commands")
         .exact_height(33.0)
-        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(9, 4)))
+        .frame(frame(PANEL).inner_margin(egui::Margin::symmetric(11, 4)))
         .show(ctx, |ui| horizontal_strip(ui, contents));
 }
 
@@ -1110,11 +1296,17 @@ fn help_bar(
     clipboard: &Clipboard,
     lang: Language,
     bindings: &Bindings,
+    compact: bool,
 ) {
+    if compact {
+        ui.spacing_mut().item_spacing.x = 5.0;
+    }
     let binding = |action| {
         bindings.label(action, |key| {
             lang.text(match key {
+                Control::PrimaryMouse if compact => Text::KeyLeftClickShort,
                 Control::PrimaryMouse => Text::KeyLeftClick,
+                Control::SecondaryMouse if compact => Text::KeyRightClickShort,
                 Control::SecondaryMouse => Text::KeyRightClick,
                 Control::MiddleMouse => Text::KeyMiddleClick,
                 Control::ExtraMouse1 => Text::KeyMouse4,
@@ -1130,14 +1322,15 @@ fn help_bar(
     let mut hint = |controls: String, label: Text| {
         if !controls.is_empty() {
             egui::Frame::new()
-                .fill(LINE)
-                .corner_radius(3)
+                .fill(TOOLBAR)
+                .stroke(egui::Stroke::new(1.0_f32, LINE))
+                .corner_radius(4)
                 .inner_margin(egui::Margin::symmetric(5, 2))
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new(controls).small().strong())
                 });
             ui.label(egui::RichText::new(lang.text(label)).small().color(MUTED));
-            ui.add_space(9.0);
+            ui.add_space(if compact { 4.0 } else { 9.0 });
         }
     };
     let editor = [
@@ -1214,9 +1407,21 @@ fn diagnostic(ui: &mut egui::Ui, title: &str, error: &Diagnostic, lang: Language
 fn clipboard_contents(ui: &mut egui::Ui, clipboard: &Clipboard, lang: Language) {
     if let Some(structure) = &clipboard.current {
         let [x, y, z] = structure.volume.dimensions();
-        ui.label(egui::RichText::new(&structure.source_name).color(ACCENT));
-        ui.monospace(format!("{x} × {y} × {z}"));
-        ui.label(lang.format(Text::ClipboardBlocks, &[&structure.block_count()]));
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            Icon::Clipboard.paint(ui.painter(), icon, ACCENT);
+            appearance::headline(ui, &structure.source_name, 14.0);
+        });
+        ui.label(
+            egui::RichText::new(lang.format(Text::Dimensions, &[&x, &y, &z]))
+                .monospace()
+                .color(MUTED),
+        );
+        ui.label(
+            egui::RichText::new(lang.format(Text::ClipboardBlocks, &[&structure.block_count()]))
+                .small()
+                .color(MUTED),
+        );
         let entities = structure.block_entity_count();
         if entities != 0 {
             let key = if entities == 1 {
@@ -1224,13 +1429,29 @@ fn clipboard_contents(ui: &mut egui::Ui, clipboard: &Clipboard, lang: Language) 
             } else {
                 Text::ClipboardEntities
             };
-            ui.label(lang.format(key, &[&entities]));
+            ui.label(
+                egui::RichText::new(lang.format(key, &[&entities]))
+                    .small()
+                    .color(MUTED),
+            );
         }
     } else if !clipboard.copying() {
-        ui.label(egui::RichText::new(lang.text(Text::EmptyClipboard)).color(MUTED));
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            Icon::Clipboard.paint(ui.painter(), icon, MUTED);
+            ui.label(
+                egui::RichText::new(lang.text(Text::EmptyClipboard))
+                    .small()
+                    .color(MUTED),
+            );
+        });
     }
     if clipboard.copying() {
-        ui.label(lang.text(Text::CopyingClipboard));
+        ui.label(
+            egui::RichText::new(lang.text(Text::CopyingClipboard))
+                .small()
+                .color(MUTED),
+        );
     }
 }
 
@@ -1257,9 +1478,16 @@ fn paste_status(
             if ui.button(lang.text(Text::ReturnToPreview)).clicked() {
                 return Some(PasteAction::Discard);
             }
-            ui.add(accent_button(lang.text(Text::ConfirmPaste)))
-                .clicked()
-                .then_some(PasteAction::Confirm)
+            appearance::button(
+                ui,
+                Some(Icon::Clipboard),
+                lang.text(Text::ConfirmPaste),
+                lang.text(Text::ConfirmPaste),
+                ButtonStyle::Primary,
+                true,
+            )
+            .clicked()
+            .then_some(PasteAction::Confirm)
         }
         PasteState::Saved(result) => {
             ui.collapsing(lang.text(Text::Backup), |ui| {
@@ -1316,13 +1544,26 @@ fn preview_controls(
     recalculating: bool,
     lang: Language,
 ) {
-    ui.label(egui::RichText::new(&preview.source.source_name).color(ACCENT));
-    let [x, y, z] = preview.volume().dimensions();
-    ui.monospace(lang.format(Text::Dimensions, &[&x, &y, &z]));
+    inspector_card(ui, |ui| {
+        ui.label(
+            egui::RichText::new(lang.text(Text::PasteSource))
+                .small()
+                .color(MUTED),
+        );
+        appearance::headline(ui, &preview.source.source_name, 16.0);
+        let [x, y, z] = preview.volume().dimensions();
+        ui.label(
+            egui::RichText::new(lang.format(Text::Dimensions, &[&x, &y, &z]))
+                .monospace()
+                .color(ACCENT),
+        );
+    });
     ui.add_space(5.0);
-    ui.label(lang.text(Text::Origin));
     let mut origin = preview.origin();
-    let (changed, focused) = edit_coordinates(ui, &mut origin, preview.limits());
+    let (changed, focused) = inspector_card(ui, |ui| {
+        appearance::headline(ui, lang.text(Text::Origin), 13.0);
+        edit_coordinates(ui, &mut origin, preview.limits())
+    });
     if changed {
         preview.set_origin(origin);
     }
@@ -1347,17 +1588,32 @@ fn selection_details(ui: &mut egui::Ui, selection: &mut Selection, position: Vec
     if selection.missed {
         ui.label(egui::RichText::new(lang.text(Text::PickMiss)).color(ALERT));
     }
-    for corner in 0..2 {
-        ui.push_id(corner, |ui| {
-            corner_controls(ui, selection, corner, position, lang)
-        });
-    }
     if let Some(volume) = selection.volume() {
         let [x, y, z] = volume.dimensions();
-        ui.monospace(lang.format(Text::Dimensions, &[&x, &y, &z]));
-        if let Err(error) = volume.validate() {
-            ui.label(egui::RichText::new(Diagnostic::from_error(error).message(lang)).color(ALERT));
-        }
+        inspector_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (icon, _) =
+                    ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover());
+                Icon::Layers.paint(ui.painter(), icon, ACCENT);
+                ui.label(
+                    egui::RichText::new(lang.format(Text::Dimensions, &[&x, &y, &z]))
+                        .monospace()
+                        .color(ACCENT),
+                );
+            });
+            if let Err(error) = volume.validate() {
+                ui.label(
+                    egui::RichText::new(Diagnostic::from_error(error).message(lang)).color(ALERT),
+                );
+            }
+        });
+    }
+    for corner in 0..2 {
+        ui.push_id(corner, |ui| {
+            inspector_card(ui, |ui| {
+                corner_controls(ui, selection, corner, position, lang)
+            });
+        });
     }
 }
 
@@ -1374,23 +1630,27 @@ fn corner_controls(
     position: Vec3,
     lang: Language,
 ) {
-    ui.add_space(5.0);
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         let color = corner_color(corner);
         ui.label(
             egui::RichText::new(lang.format(Text::Corner, &[&corner_name(corner)]))
-                .color(color)
-                .strong(),
+                .font(appearance::strong(14.0))
+                .color(color),
         );
-        if ui.small_button(lang.text(Text::Mark)).clicked() {
-            arm_pick(selection, corner, false);
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mark = lang.text(Text::Mark);
+            if appearance::button(ui, Some(Icon::Target), mark, mark, ButtonStyle::Quiet, true)
+                .clicked()
+            {
+                arm_pick(selection, corner, false);
+            }
+        });
     });
     if let Some(coords) = &mut selection.corners[corner] {
         if edit_coordinates(ui, coords, COORDINATE_LIMITS).0 {
             stop_marking(selection);
         }
-    } else if ui.small_button(lang.text(Text::EditCoordinates)).clicked() {
+    } else if ui.button(lang.text(Text::EditCoordinates)).clicked() {
         let near_camera = position.floor().as_ivec3().to_array();
         selection.corners[corner] = Some(selection.corners[1 - corner].unwrap_or_else(|| {
             std::array::from_fn(|axis| {
@@ -1407,28 +1667,49 @@ fn edit_coordinates(
     coords: &mut [i32; 3],
     limits: [(i32, i32); 3],
 ) -> (bool, bool) {
-    egui::Grid::new("coordinates")
-        .show(ui, |ui| {
-            let mut changed = false;
-            let mut focused = false;
-            for (axis, ((min, max), coordinate)) in ["X", "Y", "Z"]
-                .into_iter()
-                .zip(limits.into_iter().zip(coords))
-            {
-                ui.monospace(axis);
+    let horizontal = ui.available_width() >= 202.0;
+    let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+    let layout = if horizontal {
+        egui::Layout::left_to_right(egui::Align::Min)
+    } else {
+        egui::Layout::top_down(egui::Align::Min)
+    };
+    ui.with_layout(layout, |ui| {
+        let mut changed = false;
+        let mut focused = false;
+        for (axis, ((min, max), coordinate)) in ["X", "Y", "Z"]
+            .into_iter()
+            .zip(limits.into_iter().zip(coords))
+        {
+            let label = egui::RichText::new(axis)
+                .font(appearance::strong(12.0))
+                .color(MUTED);
+            let mut field = |ui: &mut egui::Ui, width: f32| {
                 let response = ui.add_sized(
-                    [92.0, ui.spacing().interact_size.y],
+                    [width, 27.0],
                     egui::DragValue::new(coordinate)
                         .range(min..=max)
                         .update_while_editing(false),
                 );
                 changed |= response.changed();
                 focused |= response.has_focus();
-                ui.end_row();
+            };
+            if horizontal {
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    ui.label(label);
+                    field(ui, width);
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.add_sized([18.0, 27.0], egui::Label::new(label));
+                    field(ui, ui.available_width());
+                });
             }
-            (changed, focused)
-        })
-        .inner
+        }
+        (changed, focused)
+    })
+    .inner
 }
 
 fn corner_name(corner: usize) -> &'static str {
@@ -1455,6 +1736,7 @@ mod tests {
     fn contextual_commands_reserve_the_same_viewport_space_when_empty_or_overflowing() {
         for width in [520.0, 1280.0] {
             let ctx = egui::Context::default();
+            appearance::apply(&ctx);
             let mut bottom_edge = 0.0;
             let mut draw = |count| {
                 let _ = ctx.run(
@@ -1491,6 +1773,7 @@ mod tests {
             (egui::pos2(40.0, 680.0), true),
         ] {
             let ctx = egui::Context::default();
+            appearance::apply(&ctx);
             let window = Window {
                 focused: true,
                 position: WindowPosition::At(IVec2::ZERO),
