@@ -197,7 +197,7 @@ impl Default for Bindings {
             (CameraLeft, HeldKey(KeyCode::KeyA)),
             (CameraRight, HeldKey(KeyCode::KeyD)),
             (CameraUp, HeldKey(KeyCode::Space)),
-            (CameraDown, HeldKey(KeyCode::ControlLeft)),
+            (CameraDown, HeldKey(KeyCode::KeyQ)),
             (CameraBoost, HeldKey(KeyCode::ShiftLeft)),
             (CameraBoost, HeldKey(KeyCode::ShiftRight)),
             (CameraRelease, Trigger::Key(plain, Key::Escape)),
