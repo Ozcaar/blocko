@@ -40,6 +40,7 @@ catalog! {
     CloseDialog => "Cerrar", "Close";
     AboutVersion => "Versión {0}", "Version {0}";
     AboutDescription => "Editor de escritorio para mundos de Minecraft Java Edition 1.21.1.", "Desktop editor for Minecraft Java Edition 1.21.1 worlds.";
+    Tools => "Herramientas", "Tools";
     ControlsCamera => "Cámara", "Camera";
     ControlsEditing => "Edición", "Editing";
     UndoEdit => "Deshacer", "Undo";

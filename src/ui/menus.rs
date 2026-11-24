@@ -9,8 +9,8 @@ use crate::{
 };
 
 use super::{
-    WindowActions, action_enabled, appearance::BAR, binding_label, dialogs::Dialog, frame,
-    tools_context,
+    TOOL_BUTTONS, WindowActions, action_enabled, appearance::BAR, binding_label, dialogs::Dialog,
+    frame, tools_context,
 };
 
 #[derive(Clone, Copy)]
@@ -116,13 +116,8 @@ pub(super) fn bar(
                             ui.separator();
                             command(ui, Text::BlockPalette, Action::OpenPalette);
                             let tools_enabled = !busy && world_open && !view.paste.locks_preview();
-                            for (label, tool) in [
-                                (Text::InspectBlock, EditorContext::Inspect),
-                                (Text::ManualEdit, EditorContext::Manual),
-                            ] {
-                                if entry(ui, lang.text(label), "", tools_enabled) {
-                                    actions.tool = Some(tool);
-                                }
+                            for (action, _, label) in TOOL_BUTTONS {
+                                command(ui, label, action);
                             }
                             let region_enabled = tools_enabled
                                 && tools_context(view) == EditorContext::Select

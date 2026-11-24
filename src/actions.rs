@@ -14,6 +14,10 @@ pub enum Action {
     Undo,
     Redo,
     OpenPalette,
+    UseExplore,
+    UseSelection,
+    UseInspect,
+    UseManual,
     ToggleCameraCapture,
     PinInspection,
     PaintBlock,
@@ -47,10 +51,22 @@ pub enum EditorContext {
 }
 
 impl Action {
+    pub fn tool(self) -> Option<EditorContext> {
+        match self {
+            Self::UseExplore => Some(EditorContext::Explore),
+            Self::UseSelection => Some(EditorContext::Select),
+            Self::UseInspect => Some(EditorContext::Inspect),
+            Self::UseManual => Some(EditorContext::Manual),
+            _ => None,
+        }
+    }
+
     pub fn allowed_in(self, context: EditorContext) -> bool {
         use Action::*;
         match self {
-            Copy | StartPaste => context != EditorContext::Place,
+            Copy | StartPaste | UseExplore | UseSelection | UseInspect | UseManual => {
+                context != EditorContext::Place
+            }
             Place | RepeatPlace | CancelPaste => context == EditorContext::Place,
             MarkCorner | UnmarkCorner | ClearSelection | CancelSelection => {
                 context == EditorContext::Select
@@ -181,6 +197,10 @@ impl Default for Bindings {
             (Redo, Trigger::Key(ctrl, Key::Y)),
             (Redo, Trigger::Key(ctrl | shift, Key::Z)),
             (OpenPalette, Trigger::Key(ctrl, Key::P)),
+            (UseExplore, Trigger::Key(plain, Key::Num1)),
+            (UseSelection, Trigger::Key(plain, Key::Num2)),
+            (UseInspect, Trigger::Key(plain, Key::Num3)),
+            (UseManual, Trigger::Key(plain, Key::Num4)),
             (ToggleCameraCapture, Trigger::Key(plain, Key::F)),
             (PinInspection, Click(plain, MouseButton::Left)),
             (PaintBlock, Click(plain, MouseButton::Right)),
@@ -470,6 +490,33 @@ mod tests {
         assert_eq!(bindings.camera_look_event(select, &plain), None);
         assert_eq!(bindings.camera_look_event(select, &shifted), None);
         assert_eq!(bindings.match_event(EditorContext::Manual, &shifted), None);
+    }
+
+    #[test]
+    fn tool_shortcuts_use_plain_digits_and_yield_to_placement() {
+        let bindings = Bindings::default();
+        for (key_code, action, tool) in [
+            (Key::Num1, Action::UseExplore, EditorContext::Explore),
+            (Key::Num2, Action::UseSelection, EditorContext::Select),
+            (Key::Num3, Action::UseInspect, EditorContext::Inspect),
+            (Key::Num4, Action::UseManual, EditorContext::Manual),
+        ] {
+            let event = key(key_code, Modifiers::NONE, false);
+            assert_eq!(
+                bindings.match_event(EditorContext::Explore, &event),
+                Some(action)
+            );
+            assert_eq!(action.tool(), Some(tool));
+            assert_eq!(bindings.label(action, |_| ""), key_code.name());
+            assert_eq!(bindings.match_event(EditorContext::Place, &event), None);
+            assert_eq!(
+                bindings.match_event(
+                    EditorContext::Explore,
+                    &key(key_code, Modifiers::CTRL, false)
+                ),
+                None
+            );
+        }
     }
 
     #[test]

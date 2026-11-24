@@ -38,6 +38,13 @@ mod menus;
 
 use appearance::{ACCENT, ALERT, BAR, ButtonStyle, FIELD, Icon, LINE, MUTED, PANEL, TEXT, TOOLBAR};
 
+const TOOL_BUTTONS: [(Action, Icon, Text); 4] = [
+    (Action::UseExplore, Icon::Pointer, Text::Explore),
+    (Action::UseSelection, Icon::Selection, Text::Select),
+    (Action::UseInspect, Icon::Inspect, Text::InspectBlock),
+    (Action::UseManual, Icon::Pencil, Text::ManualEdit),
+];
+
 pub fn context() -> EguiContext {
     let mut context = EguiContext::default();
     appearance::apply(context.get_mut());
@@ -290,7 +297,6 @@ pub fn draw(
                 || was_modal
                 || result.open.is_some()
                 || result.tab.is_some()
-                || result.tool.is_some()
                 || workspace.pending.is_some()
                 || menus::window_state(ctx).dialog.is_some();
             if !focused
@@ -326,7 +332,9 @@ pub fn draw(
                         return None;
                     }
                     let action = bindings.match_enabled(context, event, |action| {
-                        (action != Action::ToggleCameraCapture || viewport_focused)
+                        let needs_viewport =
+                            action.tool().is_some() || action == Action::ToggleCameraCapture;
+                        (!needs_viewport || viewport_focused)
                             && action_enabled(action, view, &clipboard, flight.captured())
                     })?;
                     let (point, shift) = match event {
@@ -376,17 +384,20 @@ pub fn draw(
         if consumes_boost {
             flight.suppress_boost_once();
         }
-        if let Some(tool) = result.tool {
-            view.tool = tool;
-            view.inspection_pinned = false;
-            view.inspected = None;
-            view.selection.cancel_marking();
-            if view.preview.take().is_some() {
-                paste::apply_action(&mut view, PasteAction::Discard);
-            }
-        }
         if let (Some((action, point)), Some((_, scale))) = (result.editor, viewport) {
             match action {
+                Action::UseExplore
+                | Action::UseSelection
+                | Action::UseInspect
+                | Action::UseManual => {
+                    if focused && let Some(tool) = action.tool() {
+                        flight.release(&mut cursor);
+                        view.tool = tool;
+                        view.inspection_pinned = false;
+                        view.inspected = None;
+                        view.selection.cancel_marking();
+                    }
+                }
                 Action::OpenPalette => {
                     flight.release(&mut cursor);
                     workspace.search = Some(palette::Search::default());
@@ -738,7 +749,6 @@ struct WindowActions {
     paste: Option<PasteAction>,
     tab: Option<(Entity, TabAction)>,
     language: Option<Language>,
-    tool: Option<EditorContext>,
     region: Option<(Volume, BlockState, Option<String>)>,
     region_menu: bool,
     demo: bool,
@@ -751,7 +761,6 @@ impl WindowActions {
         self.paste = self.paste.or(other.paste);
         self.tab = self.tab.take().or(other.tab);
         self.language = self.language.or(other.language);
-        self.tool = self.tool.or(other.tool);
         self.region = self.region.take().or(other.region);
         self.region_menu |= other.region_menu;
         self.demo |= other.demo;
@@ -934,24 +943,20 @@ fn tool_rail(
                 ui.spacing_mut().item_spacing.y = 5.0;
                 let active = tools_context(view);
                 let has_world = view.stream.is_some();
-                let enabled = has_world && !busy && !view.paste.locks_preview();
-                for (mode, icon, label, control) in [
-                    (EditorContext::Explore, Icon::Pointer, Text::Explore, None),
-                    (EditorContext::Select, Icon::Selection, Text::Select, None),
-                    (
-                        EditorContext::Inspect,
-                        Icon::Inspect,
-                        Text::InspectBlock,
-                        Some(Action::PinInspection),
-                    ),
-                    (EditorContext::Manual, Icon::Pencil, Text::ManualEdit, None),
-                ] {
+                for (action, icon, label) in TOOL_BUTTONS {
+                    let Some(mode) = action.tool() else { continue };
                     let selected = mode == active && (has_world || view.demo_scene.is_some());
+                    let enabled = has_world
+                        && !busy
+                        && !view.paste.locks_preview()
+                        && action.allowed_in(active);
                     let label = lang.text(label);
-                    let tooltip = control
-                        .map(|action| binding_label(bindings, action, lang, false))
-                        .filter(|chord| !chord.is_empty())
-                        .map_or_else(|| label.to_owned(), |chord| format!("{label} ({chord})"));
+                    let chord = binding_label(bindings, action, lang, false);
+                    let tooltip = if chord.is_empty() {
+                        label.to_owned()
+                    } else {
+                        format!("{label} ({chord})")
+                    };
                     if appearance::button(
                         ui,
                         Some(icon),
@@ -963,7 +968,7 @@ fn tool_rail(
                     .clicked()
                         && mode != active
                     {
-                        actions.tool = Some(mode);
+                        actions.editor = Some((action, None));
                     }
                     if matches!(mode, EditorContext::Explore | EditorContext::Inspect) {
                         ui.separator();
@@ -1490,6 +1495,9 @@ fn action_enabled(action: Action, view: &View, clipboard: &Clipboard, captured: 
         _ if view.paste.locks_preview() => return false,
         _ => {}
     }
+    if let Some(tool) = action.tool() {
+        return view.tool != tool;
+    }
     match action {
         Action::Save => !view.copying && view.edits.dirty(),
         Action::Undo => view.edits.can_undo(),
@@ -1815,7 +1823,7 @@ fn help_bar(
             ui.add_space(if compact { 4.0 } else { 9.0 });
         }
     };
-    let editor = [
+    for (action, label) in [
         (Action::PinInspection, Text::InspectBlock),
         (Action::EraseBlock, Text::EraseBlock),
         (Action::PaintBlock, Text::PaintBlock),
@@ -1823,21 +1831,19 @@ fn help_bar(
         (Action::UnmarkCorner, Text::UnmarkCorner),
         (Action::ClearSelection, Text::ClearSelection),
         (Action::CancelSelection, Text::ActionCancel),
-        (Action::Copy, Text::ActionCopy),
-        (Action::StartPaste, Text::ActionPaste),
         (Action::Place, Text::ActionPlace),
         (Action::RepeatPlace, Text::ActionRepeat),
         (Action::CancelPaste, Text::ActionCancel),
-        (Action::Save, Text::SaveWorld),
-        (Action::OpenPalette, Text::BlockPalette),
-    ];
-    for (action, label) in editor {
+    ] {
         if bindings.available(action, context) && action_enabled(action, view, clipboard, captured)
         {
             hint(binding(action), label);
         }
     }
-    if captured {
+    if !captured && bindings.available(Action::CameraLook, context) {
+        hint(binding(Action::CameraLook), Text::CameraLook);
+    }
+    if captured || context == EditorContext::Explore {
         hint(
             [
                 Action::CameraForward,
@@ -1851,20 +1857,38 @@ fn help_bar(
         );
         hint(binding(Action::CameraUp), Text::CameraRise);
         hint(binding(Action::CameraDown), Text::CameraDescend);
-        hint(binding(Action::CameraBoost), Text::CameraBoost);
-        if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
-            hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
+        if captured {
+            hint(binding(Action::CameraBoost), Text::CameraBoost);
+            if !(view.preview.is_some() || view.selection.picking.is_some()) {
+                hint(binding(Action::CameraRelease), Text::CameraRelease);
+            }
         }
-        if !(view.preview.is_some() || view.selection.picking.is_some()) {
-            hint(binding(Action::CameraRelease), Text::CameraRelease);
+    }
+    if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
+        hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
+    }
+    for (action, label) in [
+        (Action::OpenPalette, Text::BlockPalette),
+        (Action::Copy, Text::ActionCopy),
+        (Action::StartPaste, Text::ActionPaste),
+        (Action::Save, Text::SaveWorld),
+        (Action::Undo, Text::UndoEdit),
+        (Action::Redo, Text::RedoEdit),
+    ] {
+        if bindings.available(action, context) && action_enabled(action, view, clipboard, captured)
+        {
+            hint(binding(action), label);
         }
-    } else {
-        if bindings.available(Action::CameraLook, context) {
-            hint(binding(Action::CameraLook), Text::CameraLook);
-        }
-        if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
-            hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
-        }
+    }
+    if view.stream.is_some() && !view.paste.locks_preview() {
+        let tools = TOOL_BUTTONS
+            .into_iter()
+            .filter_map(|(action, _, _)| {
+                bindings.available(action, context).then(|| binding(action))
+            })
+            .filter(|label| !label.is_empty())
+            .collect::<Vec<_>>();
+        hint(tools.join(" / "), Text::Tools);
     }
 }
 

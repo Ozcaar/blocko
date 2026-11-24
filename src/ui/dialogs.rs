@@ -143,6 +143,19 @@ fn controls(ui: &mut Ui, lang: Language, bindings: &Bindings) {
         ui,
         lang,
         bindings,
+        Text::Tools,
+        &[
+            (Text::Explore, &[UseExplore]),
+            (Text::Select, &[UseSelection]),
+            (Text::InspectBlock, &[UseInspect]),
+            (Text::ManualEdit, &[UseManual]),
+        ],
+    );
+    ui.add_space(6.0);
+    control_group(
+        ui,
+        lang,
+        bindings,
         ControlsEditing,
         &[
             (Text::SaveWorld, &[Save]),
