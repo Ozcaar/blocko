@@ -1,6 +1,7 @@
 mod actions;
 mod anvil_write;
 mod diagnostics;
+mod edit;
 mod editor;
 mod flight;
 mod i18n;
@@ -8,6 +9,7 @@ mod java;
 mod java_paste;
 #[cfg(windows)]
 mod native_clipboard;
+mod palette;
 mod paste;
 mod placement;
 mod preview_mask;

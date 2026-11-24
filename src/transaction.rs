@@ -118,7 +118,7 @@ fn commit_with(
     if let Err(failure) = result {
         if let Err(recovery) = restore(&region, &directory, &entries[..attempted]) {
             bail!(
-                "Falló el pegado: {failure:#}. La restauración quedó pendiente: {recovery:#}. Respaldo: {}",
+                "Falló el guardado: {failure:#}. La restauración quedó pendiente: {recovery:#}. Respaldo: {}",
                 directory.display()
             );
         }
@@ -161,8 +161,12 @@ pub fn recover(world: &Path) -> Result<()> {
         let region = plain_dir(&world.join("region"))?;
         let (level, entries) = read_manifest(&directory)?;
         let _level_pin = pin_level(world, level)?;
-        restore(&region, &directory, &entries)
-            .with_context(|| format!("Quedó un pegado pendiente en {}", directory.display()))?;
+        restore(&region, &directory, &entries).with_context(|| {
+            format!(
+                "Quedó una restauración pendiente en {}",
+                directory.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -449,7 +453,7 @@ fn bounded_read(file: &mut File, limit: u64, path: &Path) -> Result<Vec<u8>> {
     let len = file.metadata()?.len();
     ensure!(
         len <= limit,
-        "El archivo es demasiado grande para preparar el pegado: {}",
+        "El archivo es demasiado grande para preparar el guardado: {}",
         path.display()
     );
     let mut bytes = Vec::with_capacity(len as usize);

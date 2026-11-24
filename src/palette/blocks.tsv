@@ -1,0 +1,442 @@
+# Blocko construction materials for Minecraft Java Edition 1.21.1.
+# ID (in the minecraft namespace), Spanish label, RGB swatch, default state properties.
+# Membership checked against the vanilla item registry. Default states from the official
+# Java server data generator (net.minecraft.data.Main --reports, reports/blocks.json).
+acacia_log	Tronco de acacia	71665C	axis=y
+acacia_planks	Tablones de acacia	B5724F
+acacia_slab	Losa de acacia	B5724F	type=bottom,waterlogged=false
+acacia_stairs	Escaleras de acacia	B5724F	facing=north,half=bottom,shape=straight,waterlogged=false
+acacia_wood	Madera de acacia	71665C	axis=y
+amethyst_block	Bloque de amatista	A687CF
+ancient_debris	Escombros ancestrales	765446
+andesite	Andesita	898A8B
+andesite_slab	Losa de andesita	898A8B	type=bottom,waterlogged=false
+andesite_stairs	Escaleras de andesita	898A8B	facing=north,half=bottom,shape=straight,waterlogged=false
+bamboo_block	Bloque de bambú	817F43	axis=y
+bamboo_mosaic	Mosaico de bambú	C6B567
+bamboo_mosaic_slab	Losa de mosaico de bambú	C6B567	type=bottom,waterlogged=false
+bamboo_mosaic_stairs	Escaleras de mosaico de bambú	C6B567	facing=north,half=bottom,shape=straight,waterlogged=false
+bamboo_planks	Tablones de bambú	C5B563
+bamboo_slab	Losa de bambú	C5B563	type=bottom,waterlogged=false
+bamboo_stairs	Escaleras de bambú	C5B563	facing=north,half=bottom,shape=straight,waterlogged=false
+basalt	Basalto	6D686C	axis=y
+bedrock	Roca madre	55545A
+birch_log	Tronco de abedul	CDC8B5	axis=y
+birch_planks	Tablones de abedul	D4C097
+birch_slab	Losa de abedul	D4C097	type=bottom,waterlogged=false
+birch_stairs	Escaleras de abedul	D4C097	facing=north,half=bottom,shape=straight,waterlogged=false
+birch_wood	Madera de abedul	CDC8B5	axis=y
+black_concrete	Hormigón negro	4B4850
+black_glazed_terracotta	Terracota vidriada negra	4B4850	facing=north
+black_stained_glass	Cristal negro	4B4850
+black_stained_glass_pane	Panel de cristal negro	4B4850	east=false,north=false,south=false,waterlogged=false,west=false
+black_terracotta	Terracota negra	4B4850
+black_wool	Lana negra	4B4850
+blackstone	Piedra negra	544B53
+blackstone_slab	Losa de piedra negra	544B53	type=bottom,waterlogged=false
+blackstone_stairs	Escaleras de piedra negra	544B53	facing=north,half=bottom,shape=straight,waterlogged=false
+blue_concrete	Hormigón azul	5466A9
+blue_glazed_terracotta	Terracota vidriada azul	5466A9	facing=north
+blue_ice	Hielo azul	80A9DF
+blue_stained_glass	Cristal azul	5466A9
+blue_stained_glass_pane	Panel de cristal azul	5466A9	east=false,north=false,south=false,waterlogged=false,west=false
+blue_terracotta	Terracota azul	5466A9
+blue_wool	Lana azul	5466A9
+bone_block	Bloque de hueso	D3CEB8	axis=y
+bookshelf	Estantería	A68A57
+brick_slab	Losa de ladrillos	BC6C5D	type=bottom,waterlogged=false
+brick_stairs	Escaleras de ladrillos	BC6C5D	facing=north,half=bottom,shape=straight,waterlogged=false
+bricks	Ladrillos	BC6C5D
+brown_concrete	Hormigón marrón	785B48
+brown_glazed_terracotta	Terracota vidriada marrón	785B48	facing=north
+brown_stained_glass	Cristal marrón	785B48
+brown_stained_glass_pane	Panel de cristal marrón	785B48	east=false,north=false,south=false,waterlogged=false,west=false
+brown_terracotta	Terracota marrón	785B48
+brown_wool	Lana marrón	785B48
+budding_amethyst	Amatista en crecimiento	9E7CC9
+calcite	Calcita	DADBD3
+carved_pumpkin	Calabaza tallada	C4843A	facing=north
+cherry_log	Tronco de cerezo	714F61	axis=y
+cherry_planks	Tablones de cerezo	DFA79C
+cherry_slab	Losa de cerezo	DFA79C	type=bottom,waterlogged=false
+cherry_stairs	Escaleras de cerezo	DFA79C	facing=north,half=bottom,shape=straight,waterlogged=false
+cherry_wood	Madera de cerezo	714F61	axis=y
+chiseled_copper	Cobre cincelado	C68569
+chiseled_deepslate	Pizarra profunda cincelada	5F5E65
+chiseled_nether_bricks	Ladrillos del Nether cincelados	5D4149
+chiseled_polished_blackstone	Piedra negra pulida cincelada	5E535E
+chiseled_quartz_block	Bloque de cuarzo cincelado	E2DBD4
+chiseled_red_sandstone	Arenisca roja cincelada	BE7038
+chiseled_sandstone	Arenisca cincelada	D6C58A
+chiseled_stone_bricks	Ladrillos de piedra cincelados	818081
+chiseled_tuff	Toba cincelada	696D65
+chiseled_tuff_bricks	Ladrillos de toba cincelados	73776B
+clay	Arcilla	A2A8B7
+coal_block	Bloque de carbón	494849
+coal_ore	Mena de carbón	77777A
+coarse_dirt	Tierra estéril	7E624C
+cobbled_deepslate	Pizarra profunda rocosa	56545C
+cobbled_deepslate_slab	Losa de pizarra profunda rocosa	56545C	type=bottom,waterlogged=false
+cobbled_deepslate_stairs	Escaleras de pizarra profunda rocosa	56545C	facing=north,half=bottom,shape=straight,waterlogged=false
+cobblestone	Roca	8A8A87
+cobblestone_slab	Losa de roca	8A8A87	type=bottom,waterlogged=false
+cobblestone_stairs	Escaleras de roca	8A8A87	facing=north,half=bottom,shape=straight,waterlogged=false
+copper_block	Bloque de cobre	C47F64
+copper_grate	Rejilla de cobre	C68569	waterlogged=false
+copper_ore	Mena de cobre	8D8176
+cracked_deepslate_bricks	Ladrillos de pizarra profunda agrietados	58565F
+cracked_deepslate_tiles	Baldosas de pizarra profunda agrietadas	50505B
+cracked_nether_bricks	Ladrillos del Nether agrietados	573D44
+cracked_polished_blackstone_bricks	Ladrillos de piedra negra pulida agrietados	534A54
+cracked_stone_bricks	Ladrillos de piedra agrietados	7D7E7E
+crimson_hyphae	Hifas de carmesí	724958	axis=y
+crimson_nylium	Micelio carmesí	9D444F
+crimson_planks	Tablones de carmesí	985A7A
+crimson_slab	Losa de carmesí	985A7A	type=bottom,waterlogged=false
+crimson_stairs	Escaleras de carmesí	985A7A	facing=north,half=bottom,shape=straight,waterlogged=false
+crimson_stem	Tallo de carmesí	724958	axis=y
+crying_obsidian	Obsidiana llorosa	6C4F9A
+cut_copper	Cobre cortado	C68569
+cut_copper_slab	Losa de cobre cortado	C68569	type=bottom,waterlogged=false
+cut_copper_stairs	Escaleras de cobre cortado	C68569	facing=north,half=bottom,shape=straight,waterlogged=false
+cut_red_sandstone	Arenisca roja cortada	C1763E
+cut_red_sandstone_slab	Losa de arenisca roja cortada	C1763E	type=bottom,waterlogged=false
+cut_sandstone	Arenisca cortada	DED19D
+cut_sandstone_slab	Losa de arenisca cortada	DED19D	type=bottom,waterlogged=false
+cyan_concrete	Hormigón cian	4D8E99
+cyan_glazed_terracotta	Terracota vidriada cian	4D8E99	facing=north
+cyan_stained_glass	Cristal cian	4D8E99
+cyan_stained_glass_pane	Panel de cristal cian	4D8E99	east=false,north=false,south=false,waterlogged=false,west=false
+cyan_terracotta	Terracota cian	4D8E99
+cyan_wool	Lana cian	4D8E99
+dark_oak_log	Tronco de roble oscuro	554539	axis=y
+dark_oak_planks	Tablones de roble oscuro	6D523D
+dark_oak_slab	Losa de roble oscuro	6D523D	type=bottom,waterlogged=false
+dark_oak_stairs	Escaleras de roble oscuro	6D523D	facing=north,half=bottom,shape=straight,waterlogged=false
+dark_oak_wood	Madera de roble oscuro	554539	axis=y
+dark_prismarine	Prismarina oscura	496F68
+dark_prismarine_slab	Losa de prismarina oscura	496F68	type=bottom,waterlogged=false
+dark_prismarine_stairs	Escaleras de prismarina oscura	496F68	facing=north,half=bottom,shape=straight,waterlogged=false
+deepslate	Pizarra profunda	57565D	axis=y
+deepslate_brick_slab	Losa de ladrillos de pizarra profunda	5F5E65	type=bottom,waterlogged=false
+deepslate_brick_stairs	Escaleras de ladrillos de pizarra profunda	5F5E65	facing=north,half=bottom,shape=straight,waterlogged=false
+deepslate_bricks	Ladrillos de pizarra profunda	5F5E65
+deepslate_coal_ore	Mena de carbón en pizarra profunda	77777A
+deepslate_copper_ore	Mena de cobre en pizarra profunda	8D8176
+deepslate_diamond_ore	Mena de diamante en pizarra profunda	6F999A
+deepslate_emerald_ore	Mena de esmeralda en pizarra profunda	719580
+deepslate_gold_ore	Mena de oro en pizarra profunda	9D8E71
+deepslate_iron_ore	Mena de hierro en pizarra profunda	91847D
+deepslate_lapis_ore	Mena de lapislázuli en pizarra profunda	727BA0
+deepslate_redstone_ore	Mena de redstone en pizarra profunda	927678	lit=false
+deepslate_tile_slab	Losa de baldosas de pizarra profunda	565661	type=bottom,waterlogged=false
+deepslate_tile_stairs	Escaleras de baldosas de pizarra profunda	565661	facing=north,half=bottom,shape=straight,waterlogged=false
+deepslate_tiles	Baldosas de pizarra profunda	565661
+diamond_block	Bloque de diamante	6FCFC6
+diamond_ore	Mena de diamante	6F999A
+diorite	Diorita	C8C9C8
+diorite_slab	Losa de diorita	C8C9C8	type=bottom,waterlogged=false
+diorite_stairs	Escaleras de diorita	C8C9C8	facing=north,half=bottom,shape=straight,waterlogged=false
+dirt	Tierra	8D6447
+dried_kelp_block	Bloque de algas secas	566347
+dripstone_block	Bloque de espeleotema	927665
+emerald_block	Bloque de esmeralda	55BD79
+emerald_ore	Mena de esmeralda	719580
+end_stone	Piedra del End	DBDDAC
+end_stone_brick_slab	Losa de ladrillos de piedra del End	D0D3A2	type=bottom,waterlogged=false
+end_stone_brick_stairs	Escaleras de ladrillos de piedra del End	D0D3A2	facing=north,half=bottom,shape=straight,waterlogged=false
+end_stone_bricks	Ladrillos de piedra del End	D0D3A2
+exposed_chiseled_copper	Cobre cincelado expuesto	AB947E
+exposed_copper	Cobre expuesto	AB947E
+exposed_copper_grate	Rejilla de cobre expuesto	AB947E	waterlogged=false
+exposed_cut_copper	Cobre cortado expuesto	AB947E
+exposed_cut_copper_slab	Losa de cobre cortado expuesto	AB947E	type=bottom,waterlogged=false
+exposed_cut_copper_stairs	Escaleras de cobre cortado expuesto	AB947E	facing=north,half=bottom,shape=straight,waterlogged=false
+gilded_blackstone	Piedra negra dorada	655447
+glass	Cristal	C2DCDF
+glass_pane	Panel de cristal	C2DCDF	east=false,north=false,south=false,waterlogged=false,west=false
+glowstone	Piedra luminosa	C49F64
+gold_block	Bloque de oro	EABC4F
+gold_ore	Mena de oro	9D8E71
+granite	Granito	A57763
+granite_slab	Losa de granito	A57763	type=bottom,waterlogged=false
+granite_stairs	Escaleras de granito	A57763	facing=north,half=bottom,shape=straight,waterlogged=false
+grass_block	Bloque de césped	739B50	snowy=false
+gray_concrete	Hormigón gris	6A696D
+gray_glazed_terracotta	Terracota vidriada gris	6A696D	facing=north
+gray_stained_glass	Cristal gris	6A696D
+gray_stained_glass_pane	Panel de cristal gris	6A696D	east=false,north=false,south=false,waterlogged=false,west=false
+gray_terracotta	Terracota gris	6A696D
+gray_wool	Lana gris	6A696D
+green_concrete	Hormigón verde	6E824B
+green_glazed_terracotta	Terracota vidriada verde	6E824B	facing=north
+green_stained_glass	Cristal verde	6E824B
+green_stained_glass_pane	Panel de cristal verde	6E824B	east=false,north=false,south=false,waterlogged=false,west=false
+green_terracotta	Terracota verde	6E824B
+green_wool	Lana verde	6E824B
+hay_block	Bala de heno	A99A46	axis=y
+honey_block	Bloque de miel	DFA946
+honeycomb_block	Bloque de panal	D78C3C
+ice	Hielo	9DBBE6
+iron_block	Bloque de hierro	CBCDD2
+iron_ore	Mena de hierro	91847D
+jack_o_lantern	Calabaza luminosa	D09047	facing=north
+jungle_log	Tronco de selva	706247	axis=y
+jungle_planks	Tablones de selva	AE7957
+jungle_slab	Losa de selva	AE7957	type=bottom,waterlogged=false
+jungle_stairs	Escaleras de selva	AE7957	facing=north,half=bottom,shape=straight,waterlogged=false
+jungle_wood	Madera de selva	706247	axis=y
+lapis_block	Bloque de lapislázuli	425F9F
+lapis_ore	Mena de lapislázuli	727BA0
+light_blue_concrete	Hormigón celeste	6DAECF
+light_blue_glazed_terracotta	Terracota vidriada celeste	6DAECF	facing=north
+light_blue_stained_glass	Cristal celeste	6DAECF
+light_blue_stained_glass_pane	Panel de cristal celeste	6DAECF	east=false,north=false,south=false,waterlogged=false,west=false
+light_blue_terracotta	Terracota celeste	6DAECF
+light_blue_wool	Lana celeste	6DAECF
+light_gray_concrete	Hormigón gris claro	B0AFA8
+light_gray_glazed_terracotta	Terracota vidriada gris clara	B0AFA8	facing=north
+light_gray_stained_glass	Cristal gris claro	B0AFA8
+light_gray_stained_glass_pane	Panel de cristal gris claro	B0AFA8	east=false,north=false,south=false,waterlogged=false,west=false
+light_gray_terracotta	Terracota gris clara	B0AFA8
+light_gray_wool	Lana gris clara	B0AFA8
+lime_concrete	Hormigón lima	95B74D
+lime_glazed_terracotta	Terracota vidriada lima	95B74D	facing=north
+lime_stained_glass	Cristal lima	95B74D
+lime_stained_glass_pane	Panel de cristal lima	95B74D	east=false,north=false,south=false,waterlogged=false,west=false
+lime_terracotta	Terracota lima	95B74D
+lime_wool	Lana lima	95B74D
+magenta_concrete	Hormigón magenta	C765AD
+magenta_glazed_terracotta	Terracota vidriada magenta	C765AD	facing=north
+magenta_stained_glass	Cristal magenta	C765AD
+magenta_stained_glass_pane	Panel de cristal magenta	C765AD	east=false,north=false,south=false,waterlogged=false,west=false
+magenta_terracotta	Terracota magenta	C765AD
+magenta_wool	Lana magenta	C765AD
+magma_block	Bloque de magma	A85A3E
+mangrove_log	Tronco de mangle	685047	axis=y
+mangrove_planks	Tablones de mangle	A2534C
+mangrove_slab	Losa de mangle	A2534C	type=bottom,waterlogged=false
+mangrove_stairs	Escaleras de mangle	A2534C	facing=north,half=bottom,shape=straight,waterlogged=false
+mangrove_wood	Madera de mangle	685047	axis=y
+melon	Melón	889642
+moss_block	Bloque de musgo	667D48
+mossy_cobblestone	Roca musgosa	7E896B
+mossy_cobblestone_slab	Losa de roca musgosa	7E896B	type=bottom,waterlogged=false
+mossy_cobblestone_stairs	Escaleras de roca musgosa	7E896B	facing=north,half=bottom,shape=straight,waterlogged=false
+mossy_stone_brick_slab	Losa de ladrillos de piedra musgosos	81876D	type=bottom,waterlogged=false
+mossy_stone_brick_stairs	Escaleras de ladrillos de piedra musgosos	81876D	facing=north,half=bottom,shape=straight,waterlogged=false
+mossy_stone_bricks	Ladrillos de piedra musgosos	81876D
+mud	Lodo	675D60
+mud_brick_slab	Losa de ladrillos de lodo	A38B74	type=bottom,waterlogged=false
+mud_brick_stairs	Escaleras de ladrillos de lodo	A38B74	facing=north,half=bottom,shape=straight,waterlogged=false
+mud_bricks	Ladrillos de lodo	A38B74
+nether_brick_slab	Losa de ladrillos del Nether	583943	type=bottom,waterlogged=false
+nether_brick_stairs	Escaleras de ladrillos del Nether	583943	facing=north,half=bottom,shape=straight,waterlogged=false
+nether_bricks	Ladrillos del Nether	583943
+nether_gold_ore	Mena de oro del Nether	9E6746
+nether_quartz_ore	Mena de cuarzo del Nether	926569
+nether_wart_block	Bloque de verrugas del Nether	963647
+netherite_block	Bloque de netherita	5E555A
+netherrack	Netherrack	863E42
+note_block	Bloque musical	92654E	instrument=harp,note=0,powered=false
+oak_log	Tronco de roble	765E3D	axis=y
+oak_planks	Tablones de roble	B7955F
+oak_slab	Losa de roble	B7955F	type=bottom,waterlogged=false
+oak_stairs	Escaleras de roble	B7955F	facing=north,half=bottom,shape=straight,waterlogged=false
+oak_wood	Madera de roble	765E3D	axis=y
+obsidian	Obsidiana	423652
+orange_concrete	Hormigón naranja	DC8540
+orange_glazed_terracotta	Terracota vidriada naranja	DC8540	facing=north
+orange_stained_glass	Cristal naranja	DC8540
+orange_stained_glass_pane	Panel de cristal naranja	DC8540	east=false,north=false,south=false,waterlogged=false,west=false
+orange_terracotta	Terracota naranja	DC8540
+orange_wool	Lana naranja	DC8540
+oxidized_chiseled_copper	Cobre cincelado oxidado	6EA997
+oxidized_copper	Cobre oxidado	6EA997
+oxidized_copper_grate	Rejilla de cobre oxidado	6EA997	waterlogged=false
+oxidized_cut_copper	Cobre cortado oxidado	6EA997
+oxidized_cut_copper_slab	Losa de cobre cortado oxidado	6EA997	type=bottom,waterlogged=false
+oxidized_cut_copper_stairs	Escaleras de cobre cortado oxidado	6EA997	facing=north,half=bottom,shape=straight,waterlogged=false
+packed_ice	Hielo compacto	88ABD9
+packed_mud	Lodo compacto	A28461
+pink_concrete	Hormigón rosa	D68CA5
+pink_glazed_terracotta	Terracota vidriada rosa	D68CA5	facing=north
+pink_stained_glass	Cristal rosa	D68CA5
+pink_stained_glass_pane	Panel de cristal rosa	D68CA5	east=false,north=false,south=false,waterlogged=false,west=false
+pink_terracotta	Terracota rosa	D68CA5
+pink_wool	Lana rosa	D68CA5
+podzol	Podsol	72513C	snowy=false
+polished_andesite	Andesita pulida	A3A4A6
+polished_andesite_slab	Losa de andesita pulida	A3A4A6	type=bottom,waterlogged=false
+polished_andesite_stairs	Escaleras de andesita pulida	A3A4A6	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_basalt	Basalto pulido	777277	axis=y
+polished_blackstone	Piedra negra pulida	5E525D
+polished_blackstone_brick_slab	Losa de ladrillos de piedra negra pulida	5B535D	type=bottom,waterlogged=false
+polished_blackstone_brick_stairs	Escaleras de ladrillos de piedra negra pulida	5B535D	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_blackstone_bricks	Ladrillos de piedra negra pulida	5B535D
+polished_blackstone_slab	Losa de piedra negra pulida	5E525D	type=bottom,waterlogged=false
+polished_blackstone_stairs	Escaleras de piedra negra pulida	5E525D	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_deepslate	Pizarra profunda pulida	616168
+polished_deepslate_slab	Losa de pizarra profunda pulida	616168	type=bottom,waterlogged=false
+polished_deepslate_stairs	Escaleras de pizarra profunda pulida	616168	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_diorite	Diorita pulida	D1D1D0
+polished_diorite_slab	Losa de diorita pulida	D1D1D0	type=bottom,waterlogged=false
+polished_diorite_stairs	Escaleras de diorita pulida	D1D1D0	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_granite	Granito pulido	B68272
+polished_granite_slab	Losa de granito pulido	B68272	type=bottom,waterlogged=false
+polished_granite_stairs	Escaleras de granito pulido	B68272	facing=north,half=bottom,shape=straight,waterlogged=false
+polished_tuff	Toba pulida	73796F
+polished_tuff_slab	Losa de toba pulida	73796F	type=bottom,waterlogged=false
+polished_tuff_stairs	Escaleras de toba pulida	73796F	facing=north,half=bottom,shape=straight,waterlogged=false
+prismarine	Prismarina	71988E
+prismarine_brick_slab	Losa de ladrillos de prismarina	67A396	type=bottom,waterlogged=false
+prismarine_brick_stairs	Escaleras de ladrillos de prismarina	67A396	facing=north,half=bottom,shape=straight,waterlogged=false
+prismarine_bricks	Ladrillos de prismarina	67A396
+prismarine_slab	Losa de prismarina	71988E	type=bottom,waterlogged=false
+prismarine_stairs	Escaleras de prismarina	71988E	facing=north,half=bottom,shape=straight,waterlogged=false
+pumpkin	Calabaza	CD8B44
+purple_concrete	Hormigón morado	8966A4
+purple_glazed_terracotta	Terracota vidriada morada	8966A4	facing=north
+purple_stained_glass	Cristal morado	8966A4
+purple_stained_glass_pane	Panel de cristal morado	8966A4	east=false,north=false,south=false,waterlogged=false,west=false
+purple_terracotta	Terracota morada	8966A4
+purple_wool	Lana morada	8966A4
+purpur_block	Bloque de púrpura	AB8CAC
+purpur_pillar	Pilar de púrpura	B69AB7	axis=y
+purpur_slab	Losa de bloque de púrpura	AB8CAC	type=bottom,waterlogged=false
+purpur_stairs	Escaleras de bloque de púrpura	AB8CAC	facing=north,half=bottom,shape=straight,waterlogged=false
+quartz_block	Bloque de cuarzo	E7E0D9
+quartz_bricks	Ladrillos de cuarzo	E4DBD3
+quartz_pillar	Pilar de cuarzo	E7DDD4	axis=y
+quartz_slab	Losa de bloque de cuarzo	E7E0D9	type=bottom,waterlogged=false
+quartz_stairs	Escaleras de bloque de cuarzo	E7E0D9	facing=north,half=bottom,shape=straight,waterlogged=false
+raw_copper_block	Bloque de cobre en bruto	AF775D
+raw_gold_block	Bloque de oro en bruto	CDA647
+raw_iron_block	Bloque de hierro en bruto	A68A7B
+red_concrete	Hormigón rojo	AC4F4C
+red_glazed_terracotta	Terracota vidriada roja	AC4F4C	facing=north
+red_nether_brick_slab	Losa de ladrillos rojos del Nether	7C4042	type=bottom,waterlogged=false
+red_nether_brick_stairs	Escaleras de ladrillos rojos del Nether	7C4042	facing=north,half=bottom,shape=straight,waterlogged=false
+red_nether_bricks	Ladrillos rojos del Nether	7C4042
+red_sandstone	Arenisca roja	B76D37
+red_sandstone_slab	Losa de arenisca roja	B76D37	type=bottom,waterlogged=false
+red_sandstone_stairs	Escaleras de arenisca roja	B76D37	facing=north,half=bottom,shape=straight,waterlogged=false
+red_stained_glass	Cristal rojo	AC4F4C
+red_stained_glass_pane	Panel de cristal rojo	AC4F4C	east=false,north=false,south=false,waterlogged=false,west=false
+red_terracotta	Terracota roja	AC4F4C
+red_wool	Lana roja	AC4F4C
+redstone_block	Bloque de redstone	B7373B
+redstone_ore	Mena de redstone	927678	lit=false
+reinforced_deepslate	Pizarra profunda reforzada	6B6F69
+rooted_dirt	Tierra con raíces	967855
+sandstone	Arenisca	D5C589
+sandstone_slab	Losa de arenisca	D5C589	type=bottom,waterlogged=false
+sandstone_stairs	Escaleras de arenisca	D5C589	facing=north,half=bottom,shape=straight,waterlogged=false
+sea_lantern	Linterna marina	BDDBCD
+shroomlight	Lumihongo	D8854E
+slime_block	Bloque de slime	8DC474
+smooth_basalt	Basalto liso	605B60
+smooth_quartz	Cuarzo liso	EBE5E0
+smooth_quartz_slab	Losa de cuarzo liso	EBE5E0	type=bottom,waterlogged=false
+smooth_quartz_stairs	Escaleras de cuarzo liso	EBE5E0	facing=north,half=bottom,shape=straight,waterlogged=false
+smooth_red_sandstone	Arenisca roja lisa	C37B45
+smooth_red_sandstone_slab	Losa de arenisca roja lisa	C37B45	type=bottom,waterlogged=false
+smooth_red_sandstone_stairs	Escaleras de arenisca roja lisa	C37B45	facing=north,half=bottom,shape=straight,waterlogged=false
+smooth_sandstone	Arenisca lisa	E1D5A2
+smooth_sandstone_slab	Losa de arenisca lisa	E1D5A2	type=bottom,waterlogged=false
+smooth_sandstone_stairs	Escaleras de arenisca lisa	E1D5A2	facing=north,half=bottom,shape=straight,waterlogged=false
+smooth_stone	Piedra lisa	A5A5A3
+smooth_stone_slab	Losa de piedra lisa	A5A5A3	type=bottom,waterlogged=false
+snow_block	Bloque de nieve	E3F0F5
+soul_soil	Tierra de almas	695048
+sponge	Esponja	CBB85A
+spruce_log	Tronco de abeto	5E4936	axis=y
+spruce_planks	Tablones de abeto	856641
+spruce_slab	Losa de abeto	856641	type=bottom,waterlogged=false
+spruce_stairs	Escaleras de abeto	856641	facing=north,half=bottom,shape=straight,waterlogged=false
+spruce_wood	Madera de abeto	5E4936	axis=y
+stone	Piedra	8C8B8D
+stone_brick_slab	Losa de ladrillos de piedra	848586	type=bottom,waterlogged=false
+stone_brick_stairs	Escaleras de ladrillos de piedra	848586	facing=north,half=bottom,shape=straight,waterlogged=false
+stone_bricks	Ladrillos de piedra	848586
+stone_slab	Losa de piedra	8C8B8D	type=bottom,waterlogged=false
+stone_stairs	Escaleras de piedra	8C8B8D	facing=north,half=bottom,shape=straight,waterlogged=false
+stripped_acacia_log	Tronco de acacia descortezado	B5724F	axis=y
+stripped_acacia_wood	Madera de acacia descortezada	B5724F	axis=y
+stripped_bamboo_block	Bloque de bambú descortezado	C5B563	axis=y
+stripped_birch_log	Tronco de abedul descortezado	D4C097	axis=y
+stripped_birch_wood	Madera de abedul descortezada	D4C097	axis=y
+stripped_cherry_log	Tronco de cerezo descortezado	DFA79C	axis=y
+stripped_cherry_wood	Madera de cerezo descortezada	DFA79C	axis=y
+stripped_crimson_hyphae	Hifas de carmesí sin corteza	985A7A	axis=y
+stripped_crimson_stem	Tallo de carmesí descortezado	985A7A	axis=y
+stripped_dark_oak_log	Tronco de roble oscuro descortezado	6D523D	axis=y
+stripped_dark_oak_wood	Madera de roble oscuro descortezada	6D523D	axis=y
+stripped_jungle_log	Tronco de selva descortezado	AE7957	axis=y
+stripped_jungle_wood	Madera de selva descortezada	AE7957	axis=y
+stripped_mangrove_log	Tronco de mangle descortezado	A2534C	axis=y
+stripped_mangrove_wood	Madera de mangle descortezada	A2534C	axis=y
+stripped_oak_log	Tronco de roble descortezado	B7955F	axis=y
+stripped_oak_wood	Madera de roble descortezada	B7955F	axis=y
+stripped_spruce_log	Tronco de abeto descortezado	856641	axis=y
+stripped_spruce_wood	Madera de abeto descortezada	856641	axis=y
+stripped_warped_hyphae	Hifas distorsionadas sin corteza	53978F	axis=y
+stripped_warped_stem	Tallo distorsionado descortezado	53978F	axis=y
+terracotta	Terracota	A46A50
+tinted_glass	Cristal opaco	685E70
+tuff	Toba	6A6D64
+tuff_brick_slab	Losa de ladrillos de toba	777A70	type=bottom,waterlogged=false
+tuff_brick_stairs	Escaleras de ladrillos de toba	777A70	facing=north,half=bottom,shape=straight,waterlogged=false
+tuff_bricks	Ladrillos de toba	777A70
+tuff_slab	Losa de toba	6A6D64	type=bottom,waterlogged=false
+tuff_stairs	Escaleras de toba	6A6D64	facing=north,half=bottom,shape=straight,waterlogged=false
+warped_hyphae	Hifas distorsionadas	4D7474	axis=y
+warped_nylium	Micelio distorsionado	427F78
+warped_planks	Tablones distorsionados	53978F
+warped_slab	Losa distorsionada	53978F	type=bottom,waterlogged=false
+warped_stairs	Escaleras distorsionadas	53978F	facing=north,half=bottom,shape=straight,waterlogged=false
+warped_stem	Tallo distorsionado	4D7474	axis=y
+warped_wart_block	Bloque de verrugas distorsionadas	457F76
+waxed_chiseled_copper	Cobre cincelado encerado	C68569
+waxed_copper_block	Bloque de cobre encerado	C47F64
+waxed_copper_grate	Rejilla de cobre encerado	C68569	waterlogged=false
+waxed_cut_copper	Cobre cortado encerado	C68569
+waxed_cut_copper_slab	Losa de cobre cortado encerado	C68569	type=bottom,waterlogged=false
+waxed_cut_copper_stairs	Escaleras de cobre cortado encerado	C68569	facing=north,half=bottom,shape=straight,waterlogged=false
+waxed_exposed_chiseled_copper	Cobre cincelado expuesto encerado	AB947E
+waxed_exposed_copper	Cobre expuesto encerado	AB947E
+waxed_exposed_copper_grate	Rejilla de cobre expuesto encerado	AB947E	waterlogged=false
+waxed_exposed_cut_copper	Cobre cortado expuesto encerado	AB947E
+waxed_exposed_cut_copper_slab	Losa de cobre cortado expuesto encerado	AB947E	type=bottom,waterlogged=false
+waxed_exposed_cut_copper_stairs	Escaleras de cobre cortado expuesto encerado	AB947E	facing=north,half=bottom,shape=straight,waterlogged=false
+waxed_oxidized_chiseled_copper	Cobre cincelado oxidado encerado	6EA997
+waxed_oxidized_copper	Cobre oxidado encerado	6EA997
+waxed_oxidized_copper_grate	Rejilla de cobre oxidado encerado	6EA997	waterlogged=false
+waxed_oxidized_cut_copper	Cobre cortado oxidado encerado	6EA997
+waxed_oxidized_cut_copper_slab	Losa de cobre cortado oxidado encerado	6EA997	type=bottom,waterlogged=false
+waxed_oxidized_cut_copper_stairs	Escaleras de cobre cortado oxidado encerado	6EA997	facing=north,half=bottom,shape=straight,waterlogged=false
+waxed_weathered_chiseled_copper	Cobre cincelado desgastado encerado	729A8B
+waxed_weathered_copper	Cobre desgastado encerado	729A8B
+waxed_weathered_copper_grate	Rejilla de cobre desgastado encerado	729A8B	waterlogged=false
+waxed_weathered_cut_copper	Cobre cortado desgastado encerado	729A8B
+waxed_weathered_cut_copper_slab	Losa de cobre cortado desgastado encerado	729A8B	type=bottom,waterlogged=false
+waxed_weathered_cut_copper_stairs	Escaleras de cobre cortado desgastado encerado	729A8B	facing=north,half=bottom,shape=straight,waterlogged=false
+weathered_chiseled_copper	Cobre cincelado desgastado	729A8B
+weathered_copper	Cobre desgastado	729A8B
+weathered_copper_grate	Rejilla de cobre desgastado	729A8B	waterlogged=false
+weathered_cut_copper	Cobre cortado desgastado	729A8B
+weathered_cut_copper_slab	Losa de cobre cortado desgastado	729A8B	type=bottom,waterlogged=false
+weathered_cut_copper_stairs	Escaleras de cobre cortado desgastado	729A8B	facing=north,half=bottom,shape=straight,waterlogged=false
+wet_sponge	Esponja mojada	B6A553
+white_concrete	Hormigón blanco	E4E3DC
+white_glazed_terracotta	Terracota vidriada blanca	E4E3DC	facing=north
+white_stained_glass	Cristal blanco	E4E3DC
+white_stained_glass_pane	Panel de cristal blanco	E4E3DC	east=false,north=false,south=false,waterlogged=false,west=false
+white_terracotta	Terracota blanca	E4E3DC
+white_wool	Lana blanca	E4E3DC
+yellow_concrete	Hormigón amarillo	D7BF5B
+yellow_glazed_terracotta	Terracota vidriada amarilla	D7BF5B	facing=north
+yellow_stained_glass	Cristal amarillo	D7BF5B
+yellow_stained_glass_pane	Panel de cristal amarillo	D7BF5B	east=false,north=false,south=false,waterlogged=false,west=false
+yellow_terracotta	Terracota amarilla	D7BF5B
+yellow_wool	Lana amarilla	D7BF5B

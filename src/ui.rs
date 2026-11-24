@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use bevy::{
     camera::Viewport,
     prelude::*,
-    window::{RawHandleWrapper, WindowPosition},
+    window::{CursorOptions, RawHandleWrapper, WindowPosition},
 };
 use bevy_egui::{EguiContext, EguiFullOutput, EguiInput, egui};
 use raw_window_handle::{
@@ -16,18 +16,21 @@ use crate::{
     actions::{Action, Bindings, Control, EditorContext},
     diagnostics::Diagnostic,
     editor::{
-        self, DemoSelection, Destination, OpenNotice, Overlay, PendingOpen, SceneAssets, TabAction,
-        TabRequest, View, Workspace,
+        self, DemoSelection, Destination, LeaveChoice, LeaveDecision, OpenNotice, Overlay,
+        SceneAssets, TabAction, TabRequest, View, Workspace,
     },
     flight::Flight,
     i18n::{Language, Text},
-    paste::{self, PasteAction, PasteState, PasteSummary},
+    palette::{self, Palette},
+    paste::{self, EditIntent, PasteAction, PasteState},
     placement::{AirMode, Placement},
     selection::{self, Selection},
-    structure::{Clipboard, CopyNotice, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y},
+    structure::{Clipboard, CopyNotice, MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y, Volume},
+    world::{BlockState, ChunkPos},
 };
 
 mod appearance;
+mod block_inspector;
 mod dialogs;
 mod menus;
 
@@ -85,7 +88,12 @@ impl HasDisplayHandle for DialogParent {
 
 pub fn draw(
     mut commands: Commands,
-    mut windows: Query<(&Window, &mut Workspace, Option<&RawHandleWrapper>)>,
+    mut windows: Query<(
+        &Window,
+        &mut CursorOptions,
+        &mut Workspace,
+        Option<&RawHandleWrapper>,
+    )>,
     mut views: ParamSet<(Query<&View>, Query<&mut View>)>,
     mut overlays: Query<(
         &Overlay,
@@ -94,10 +102,12 @@ pub fn draw(
         &mut EguiInput,
         &mut EguiFullOutput,
     )>,
-    mut cameras: Query<(&mut Camera, &Transform, &Flight), Without<Overlay>>,
+    mut cameras: Query<(&mut Camera, &Transform, &mut Flight), Without<Overlay>>,
     mut demo_selection: ResMut<DemoSelection>,
     mut clipboard: ResMut<Clipboard>,
     mut language: ResMut<Language>,
+    mut palette: ResMut<Palette>,
+    mut leave_decisions: MessageWriter<LeaveDecision>,
     mut tab_requests: MessageWriter<TabRequest>,
     assets: Res<SceneAssets>,
     bindings: Res<Bindings>,
@@ -105,7 +115,7 @@ pub fn draw(
     let mut demo_requested = false;
     for (overlay, mut overlay_camera, mut egui, mut input, mut output) in &mut overlays {
         let window_id = overlay.0;
-        let Ok((window, mut workspace, handle)) = windows.get_mut(window_id) else {
+        let Ok((window, mut cursor, mut workspace, handle)) = windows.get_mut(window_id) else {
             continue;
         };
         let tabs = {
@@ -114,17 +124,34 @@ pub fn draw(
                 .tabs
                 .iter()
                 .filter_map(|&tab| {
-                    let stream = read.get(tab).ok()?.stream.as_ref()?;
-                    Some((tab, stream.name.clone(), stream.path().to_owned()))
+                    let view = read.get(tab).ok()?;
+                    let stream = view.stream.as_ref()?;
+                    let name = if view.edits.dirty() {
+                        format!("{} *", stream.name)
+                    } else {
+                        stream.name.clone()
+                    };
+                    Some((tab, name, stream.path().to_owned()))
                 })
                 .collect::<Vec<_>>()
         };
+        let leaving = workspace.leave.as_ref().and_then(|leave| {
+            let document = leave.document()?;
+            let read = views.p0();
+            let view = read.get(document).ok()?;
+            let stream = view.stream.as_ref()?;
+            let error = match &view.paste {
+                PasteState::Error(error) => Some(error.message(*language)),
+                _ => None,
+            };
+            Some((document, stream.name.clone(), leave.saving, error))
+        });
         let document = workspace.active;
         let mut docs = views.p1();
         let Ok(mut view) = docs.get_mut(document) else {
             continue;
         };
-        let Ok((mut camera, transform, flight)) = cameras.get_mut(view.camera) else {
+        let Ok((mut camera, transform, mut flight)) = cameras.get_mut(view.camera) else {
             continue;
         };
 
@@ -132,6 +159,9 @@ pub fn draw(
         let mut viewport = None;
         let ctx = egui.get_mut();
         let had_focus = input_blocked(ctx);
+        let was_modal = workspace.search.is_some()
+            || workspace.leave.is_some()
+            || menus::window_state(ctx).dialog.is_some();
         let raw = input.take();
         let parent = DialogParent::from_window(handle);
         #[cfg(windows)]
@@ -147,6 +177,28 @@ pub fn draw(
         };
         let focused = raw.focused && window.focused;
         let pass = ctx.run(raw, |ctx| {
+            // The camera still uses the preceding frame's viewport while egui lays out this one.
+            let ray_point = view.viewport.and_then(|viewport| {
+                if flight.captured() {
+                    Some(viewport.center())
+                } else {
+                    let point =
+                        to_logical(ctx.pointer_hover_pos()?, ctx.pixels_per_point(), window);
+                    viewport.contains(point).then_some(point)
+                }
+            });
+            let aimed = ray_point.and_then(|point| {
+                selection::cursor_hit(view.stream.as_ref()?, &camera, transform, point)
+            });
+            if view.tool == EditorContext::Inspect
+                && !view.inspection_pinned
+                && ray_point.is_some()
+                && focused
+                && !was_modal
+                && !had_focus
+            {
+                view.inspected = aimed.map(|hit| hit.position);
+            }
             let actions = window_ui(
                 ctx,
                 window,
@@ -157,6 +209,8 @@ pub fn draw(
                 flight.captured(),
                 &mut demo_selection,
                 &clipboard,
+                &palette,
+                aimed,
                 *language,
                 &bindings,
             );
@@ -167,7 +221,7 @@ pub fn draw(
             }
             if view.preview.is_some() {
                 draw_placement_badge(ctx, rect, *language);
-            } else if view.selecting && view.viewport.is_some() {
+            } else if view.tool == EditorContext::Select && view.viewport.is_some() {
                 draw_corner_labels(
                     ctx,
                     rect,
@@ -178,57 +232,87 @@ pub fn draw(
                     &view.selection,
                 );
             }
-            workspace.blocks_camera = had_focus || input_blocked(ctx);
+            if !was_modal && !had_focus && view.preview.is_none() {
+                let highlight = match view.tool {
+                    EditorContext::Inspect => view.inspected,
+                    EditorContext::Paint => aimed.map(selection::Hit::adjacent),
+                    EditorContext::Erase => aimed.map(|hit| hit.position),
+                    _ => None,
+                };
+                if let Some(target) = highlight {
+                    draw_block_outline(
+                        ctx,
+                        rect,
+                        scale,
+                        window,
+                        &camera,
+                        transform,
+                        target,
+                        view.tool == EditorContext::Erase,
+                    );
+                }
+            }
+            if flight.captured() && !was_modal {
+                draw_reticle(ctx, rect);
+            }
+
             result.merge(actions);
+            if let Some((document, name, saving, error)) = &leaving {
+                if let Some(choice) = confirm_leave(ctx, *language, name, *saving, error.as_deref())
+                {
+                    leave_decisions.write(LeaveDecision {
+                        window: window_id,
+                        document: *document,
+                        choice,
+                    });
+                }
+            } else if let Some(search) = &mut workspace.search
+                && !search.show(ctx, *language, &mut palette)
+            {
+                workspace.search = None;
+            }
+            workspace.blocks_camera = had_focus
+                || input_blocked(ctx)
+                || was_modal
+                || result.open.is_some()
+                || result.tool.is_some()
+                || workspace.pending.is_some()
+                || menus::window_state(ctx).dialog.is_some();
             if !focused
                 || workspace.blocks_camera
-                || workspace.pending.is_some()
                 || view.paste.writes()
                 || result.tab.is_some()
-                || result.open.is_some()
                 || result.paste.is_some()
                 || result.language.is_some()
+                || result.region.is_some()
             {
                 return;
             }
             let view = &mut *view;
-            if !flight.captured()
-                && !view.paste.locks_preview()
-                && view.viewport.is_some()
-                && let Some(point) = ctx
-                    .pointer_hover_pos()
-                    .filter(|point| rect.contains(*point))
+            if !view.paste.locks_preview()
                 && let Some(preview) = &mut view.preview
                 && preview.moving
-                && let Some(stream) = &view.stream
             {
-                let hit = selection::cursor_hit(
-                    stream,
-                    &camera,
-                    transform,
-                    to_logical(point, scale, window),
-                );
-                preview.set_cursor_target(hit.map(selection::Hit::adjacent));
+                preview.set_cursor_target(aimed.map(selection::Hit::adjacent));
             }
-            let context = tools_context(&view);
             if let Some(action) = ctx.input(|input| {
                 input.events.iter().find_map(|event| {
-                    let action = bindings.match_event(context, event)?;
+                    let action = bindings.match_enabled(tools_context(view), event, |action| {
+                        action_enabled(action, view, &clipboard, flight.captured())
+                    })?;
                     let point = match event {
                         egui::Event::PointerButton { pos, .. } => {
-                            if !rect.contains(*pos) {
+                            if flight.captured() {
+                                Some(rect.center())
+                            } else if rect.contains(*pos) {
+                                Some(*pos)
+                            } else {
                                 return None;
                             }
-                            Some(*pos)
                         }
                         _ => None,
                     };
-                    (action_enabled(action, &view, &clipboard, flight.captured())
-                        || (matches!(action, Action::Place | Action::RepeatPlace)
-                            && !flight.captured()
-                            && !view.paste.locks_preview()
-                            && view.preview.is_some()))
-                    .then_some((action, point))
+                    Some((action, point))
                 })
             }) {
                 result.editor.get_or_insert(action);
@@ -242,16 +326,76 @@ pub fn draw(
             );
         }
         **output = Some(pass);
+        if workspace.blocks_camera || !focused {
+            flight.release(&mut cursor);
+        }
+        if let Some(tool) = result.tool {
+            view.tool = tool;
+            view.inspection_pinned = false;
+            view.inspected = None;
+            stop_marking(&mut view.selection);
+            if view.preview.take().is_some() {
+                paste::apply_action(&mut view, PasteAction::Discard);
+            }
+        }
         if let (Some((action, point)), Some((_, scale))) = (result.editor, viewport) {
-            let hit = point.filter(|_| view.viewport.is_some()).and_then(|point| {
-                selection::cursor_hit(
-                    view.stream.as_ref()?,
-                    &camera,
-                    transform,
-                    to_logical(point, scale, window),
-                )
-            });
-            execute_action(&mut view, document, &mut clipboard, action, hit);
+            match action {
+                Action::OpenPalette => {
+                    flight.release(&mut cursor);
+                    workspace.search = Some(palette::Search::default());
+                    workspace.blocks_camera = true;
+                }
+                Action::ToggleCameraCapture => {
+                    if focused {
+                        flight.toggle_capture(&mut cursor);
+                    }
+                }
+                Action::CameraRelease => flight.release(&mut cursor),
+                Action::StartPaste => {
+                    flight.release(&mut cursor);
+                    execute_action(&mut view, document, &mut clipboard, action, None);
+                }
+                Action::PaintBlock | Action::EraseBlock => {
+                    if let Some(hit) = point.and_then(|point| {
+                        selection::cursor_hit(
+                            view.stream.as_ref()?,
+                            &camera,
+                            transform,
+                            to_logical(point, scale, window),
+                        )
+                    }) {
+                        let (target, state) = if action == Action::PaintBlock {
+                            (hit.adjacent(), palette.active().clone())
+                        } else {
+                            (
+                                hit.position,
+                                BlockState {
+                                    name: "minecraft:air".into(),
+                                    properties: Default::default(),
+                                },
+                            )
+                        };
+                        paste::set_blocks(
+                            &mut view,
+                            Volume::between(target, target),
+                            state,
+                            None,
+                            false,
+                        );
+                    }
+                }
+                _ => {
+                    let hit = point.filter(|_| view.viewport.is_some()).and_then(|point| {
+                        selection::cursor_hit(
+                            view.stream.as_ref()?,
+                            &camera,
+                            transform,
+                            to_logical(point, scale, window),
+                        )
+                    });
+                    execute_action(&mut view, document, &mut clipboard, action, hit);
+                }
+            }
         }
         update_viewport(&mut view, &mut camera, viewport, window);
         let clear = if viewport.is_some() {
@@ -276,9 +420,11 @@ pub fn draw(
             });
         } else if let Some(destination) = result.open {
             workspace.notice = None;
-            workspace.pending = Some(PendingOpen::browse(destination, *language, parent));
+            workspace.request_open(destination, *language, parent, view.edits.dirty());
         } else if let Some(action) = result.paste {
             paste::apply_action(&mut view, action);
+        } else if let Some((volume, state, matching)) = result.region {
+            paste::set_blocks(&mut view, volume, state, matching, true);
         }
         demo_requested |= result.demo;
     }
@@ -288,6 +434,110 @@ pub fn draw(
             views.p0().iter().map(|view| view.layer),
             &assets,
         );
+    }
+}
+
+fn draw_reticle(ctx: &egui::Context, viewport: egui::Rect) {
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Middle,
+        egui::Id::new("camera reticle"),
+    ));
+    let center = viewport.center();
+    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(175));
+    for axis in [egui::vec2(5.0, 0.0), egui::vec2(0.0, 5.0)] {
+        painter.line_segment([center - axis, center + axis], stroke);
+    }
+}
+
+fn draw_block_outline(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    scale: f32,
+    window: &Window,
+    camera: &Camera,
+    transform: &Transform,
+    block: [i32; 3],
+    erase: bool,
+) {
+    let origin = Vec3::from_array(block.map(|value| value as f32));
+    let camera_pose = GlobalTransform::from(*transform);
+    let corners: [Option<egui::Pos2>; 8] = std::array::from_fn(|corner| {
+        let world = origin
+            + Vec3::new(
+                (corner & 1) as f32,
+                ((corner >> 1) & 1) as f32,
+                ((corner >> 2) & 1) as f32,
+            );
+        let point =
+            camera.world_to_viewport(&camera_pose, world).ok()? * (window.scale_factor() / scale);
+        Some(egui::pos2(point.x, point.y))
+    });
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("pointed block"),
+        ))
+        .with_clip_rect(viewport);
+    let color = if erase { ALERT } else { ACCENT };
+    for from in 0..8 {
+        for bit in [1, 2, 4] {
+            if from & bit == 0
+                && let (Some(a), Some(b)) = (corners[from], corners[from | bit])
+            {
+                painter.line_segment([a, b], egui::Stroke::new(1.0_f32, color));
+            }
+        }
+    }
+}
+
+fn confirm_leave(
+    ctx: &egui::Context,
+    lang: Language,
+    name: &str,
+    saving: bool,
+    error: Option<&str>,
+) -> Option<LeaveChoice> {
+    let modal = egui::Modal::new(egui::Id::new("unsaved world")).show(ctx, |ui| {
+        ui.set_width(340.0_f32.min(ctx.content_rect().width() - 36.0));
+        appearance::headline(ui, lang.text(Text::SaveChangesTitle), 18.0);
+        ui.add_space(6.0);
+        ui.label(lang.format(Text::UnsavedPrompt, &[&name]));
+        if saving {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(lang.format(Text::SavingWorld, &[&name]));
+            });
+            return None;
+        }
+        if let Some(error) = error {
+            ui.label(egui::RichText::new(error).color(ALERT));
+        }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            [
+                (Text::SaveWorld, LeaveChoice::Save, ButtonStyle::Primary),
+                (
+                    Text::DiscardChanges,
+                    LeaveChoice::Discard,
+                    ButtonStyle::Quiet,
+                ),
+                (Text::ActionCancel, LeaveChoice::Cancel, ButtonStyle::Quiet),
+            ]
+            .into_iter()
+            .filter_map(|(label, choice, style)| {
+                let label = lang.text(label);
+                appearance::button(ui, None, label, label, style, true)
+                    .clicked()
+                    .then_some(choice)
+            })
+            .last()
+        })
+        .inner
+    });
+    if modal.should_close() && !saving {
+        Some(LeaveChoice::Cancel)
+    } else {
+        modal.inner
     }
 }
 
@@ -431,6 +681,9 @@ struct WindowActions {
     paste: Option<PasteAction>,
     tab: Option<(Entity, TabAction)>,
     language: Option<Language>,
+    tool: Option<EditorContext>,
+    region: Option<(Volume, BlockState, Option<String>)>,
+    region_menu: bool,
     demo: bool,
 }
 
@@ -441,6 +694,9 @@ impl WindowActions {
         self.paste = self.paste.or(other.paste);
         self.tab = self.tab.take().or(other.tab);
         self.language = self.language.or(other.language);
+        self.tool = self.tool.or(other.tool);
+        self.region = self.region.take().or(other.region);
+        self.region_menu |= other.region_menu;
         self.demo |= other.demo;
     }
 }
@@ -455,11 +711,16 @@ fn window_ui(
     captured: bool,
     demo: &mut DemoSelection,
     clipboard: &Clipboard,
+    palette: &Palette,
+    aimed: Option<selection::Hit>,
     lang: Language,
     bindings: &Bindings,
 ) -> WindowActions {
     let mut actions = WindowActions::default();
-    let busy = workspace.pending.is_some() || view.paste.writes();
+    let busy = workspace.pending.is_some()
+        || workspace.leave.is_some()
+        || workspace.search.is_some()
+        || view.paste.busy();
     let name = view.stream.as_ref().map(|stream| stream.name.clone());
     let scene = name.is_some() || view.demo_scene.is_some();
     let mut chrome = menus::window_state(ctx);
@@ -482,7 +743,7 @@ fn window_ui(
         ctx, workspace, view, position, captured, clipboard, lang, bindings,
     );
     if chrome.activity_bar {
-        tool_rail(ctx, view, busy, captured, lang, &mut actions);
+        tool_rail(ctx, view, busy, lang, bindings, &mut actions);
     }
 
     if !scene {
@@ -507,6 +768,8 @@ fn window_ui(
                                     position,
                                     busy,
                                     clipboard,
+                                    palette,
+                                    aimed,
                                     lang,
                                     &mut actions,
                                 );
@@ -596,10 +859,10 @@ fn empty_workspace(
 
 fn tool_rail(
     ctx: &egui::Context,
-    view: &mut View,
+    view: &View,
     busy: bool,
-    captured: bool,
     lang: Language,
+    bindings: &Bindings,
     actions: &mut WindowActions,
 ) {
     egui::SidePanel::left("primary tools")
@@ -611,32 +874,49 @@ fn tool_rail(
                 ui.spacing_mut().item_spacing.y = 5.0;
                 let active = tools_context(view);
                 let has_world = view.stream.is_some();
-                let enabled = has_world && !busy && !captured && !view.paste.locks_preview();
-                for (mode, icon, label) in [
-                    (EditorContext::Explore, Icon::Pointer, Text::Explore),
-                    (EditorContext::Select, Icon::Selection, Text::Select),
+                let enabled = has_world && !busy && !view.paste.locks_preview();
+                for (mode, icon, label, control) in [
+                    (EditorContext::Explore, Icon::Pointer, Text::Explore, None),
+                    (EditorContext::Select, Icon::Selection, Text::Select, None),
+                    (
+                        EditorContext::Inspect,
+                        Icon::Inspect,
+                        Text::InspectBlock,
+                        Some(Action::PinInspection),
+                    ),
+                    (
+                        EditorContext::Paint,
+                        Icon::Cube,
+                        Text::PaintBlock,
+                        Some(Action::PaintBlock),
+                    ),
+                    (
+                        EditorContext::Erase,
+                        Icon::Erase,
+                        Text::EraseBlock,
+                        Some(Action::EraseBlock),
+                    ),
                 ] {
                     let selected = mode == active && (has_world || view.demo_scene.is_some());
+                    let label = lang.text(label);
+                    let tooltip = control
+                        .map(|action| binding_label(bindings, action, lang, false))
+                        .filter(|chord| !chord.is_empty())
+                        .map_or_else(|| label.to_owned(), |chord| format!("{label} ({chord})"));
                     if appearance::button(
                         ui,
                         Some(icon),
                         "",
-                        lang.text(label),
+                        &tooltip,
                         ButtonStyle::Mode(selected),
                         enabled,
                     )
                     .clicked()
                         && mode != active
                     {
-                        view.selecting = mode == EditorContext::Select;
-                        if !view.selecting {
-                            stop_marking(&mut view.selection);
-                        }
-                        if view.preview.is_some() {
-                            actions.editor = Some((Action::CancelPaste, None));
-                        }
+                        actions.tool = Some(mode);
                     }
-                    if mode == EditorContext::Explore {
+                    if matches!(mode, EditorContext::Explore | EditorContext::Inspect) {
                         ui.separator();
                     }
                 }
@@ -921,6 +1201,8 @@ fn inspector(
     position: Vec3,
     busy: bool,
     clipboard: &Clipboard,
+    palette: &Palette,
+    aimed: Option<selection::Hit>,
     lang: Language,
     actions: &mut WindowActions,
 ) {
@@ -928,37 +1210,98 @@ fn inspector(
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(6.0);
-    let paste_locked = view.paste.locks_preview();
-    let placing = view.preview.is_some() || paste_locked;
-    let section = if placing {
-        Some(Text::Placement)
-    } else if view.selecting {
-        Some(Text::Select)
-    } else {
-        None
+    let locked = view.paste.locks_preview();
+    let context = tools_context(view);
+    let section = match context {
+        EditorContext::Explore => None,
+        EditorContext::Select => Some(Text::Select),
+        EditorContext::Inspect => Some(Text::InspectBlock),
+        EditorContext::Paint => Some(Text::PaintBlock),
+        EditorContext::Erase => Some(Text::EraseBlock),
+        EditorContext::Place => Some(Text::Placement),
     };
     if let Some(section) = section {
         appearance::headline(ui, lang.text(section), 17.0);
         ui.add_space(4.0);
     }
-    ui.add_enabled_ui(!busy, |ui| {
-        if let Some(action) = paste_status(ui, &view.paste, name, lang) {
-            actions.paste.get_or_insert(action);
-        }
-        if !paste_locked {
-            if let Some(preview) = &mut view.preview {
-                placement_actions(ui, preview, lang, actions);
-                view.air_mode = preview.mode;
-                ui.add_space(4.0);
-                let recalculating = view
-                    .stream
-                    .as_ref()
-                    .is_some_and(|stream| stream.preview_busy());
-                preview_controls(ui, preview, recalculating, lang);
-            } else if view.selecting {
-                selection_actions(ui, &mut view.selection, lang);
-                ui.add_space(4.0);
-                selection_details(ui, &mut view.selection, position, lang);
+    if let Some(action) = paste_status(ui, &view.paste, name, lang) {
+        actions.paste.get_or_insert(action);
+    }
+    ui.add_enabled_ui(!busy && !locked, |ui| {
+        if let Some(preview) = &mut view.preview {
+            placement_actions(ui, preview, lang, actions);
+            view.air_mode = preview.mode;
+            ui.add_space(4.0);
+            let recalculating = view
+                .stream
+                .as_ref()
+                .is_some_and(|stream| stream.preview_busy());
+            preview_controls(ui, preview, recalculating, lang);
+        } else {
+            match context {
+                EditorContext::Select => {
+                    selection_actions(ui, &mut view.selection, lang);
+                    ui.add_space(4.0);
+                    selection_details(ui, &mut view.selection, position, lang);
+                    if let Some(volume) = view
+                        .selection
+                        .volume()
+                        .filter(|volume| volume.validate().is_ok())
+                    {
+                        ui.add_space(7.0);
+                        ui.separator();
+                        let jump = actions.region_menu;
+                        let region = egui::CollapsingHeader::new(
+                            egui::RichText::new(lang.text(Text::RegionEdit))
+                                .font(appearance::strong(14.0)),
+                        )
+                        .id_salt("region operations")
+                        .open(jump.then_some(true))
+                        .show_unindented(ui, |ui| {
+                            region_controls(ui, view, volume, palette, lang, actions)
+                        });
+                        if jump {
+                            region
+                                .header_response
+                                .scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
+                }
+                EditorContext::Inspect => {
+                    if let Some(([x, y, z], chunk)) = view.inspected.and_then(|position| {
+                        let [x, _, z] = position;
+                        let chunk = view
+                            .stream
+                            .as_ref()?
+                            .loaded_chunk(ChunkPos::from_block(x, z))?;
+                        Some((position, chunk))
+                    }) && let Some(state) = chunk.block(x.rem_euclid(16), y, z.rem_euclid(16))
+                    {
+                        block_inspector::show(
+                            ui,
+                            lang,
+                            [x, y, z],
+                            state,
+                            chunk.block_entities.get(&[x, y, z]),
+                            view.edits.contains([x, y, z]),
+                        );
+                        let source = lang.text(Text::UseAsReplaceSource);
+                        if ui.small_button(source).clicked() {
+                            view.replace_source.clone_from(&state.name);
+                        }
+                    } else {
+                        ui.label(egui::RichText::new(lang.text(Text::NoTargetBlock)).color(MUTED));
+                    }
+                }
+                EditorContext::Paint | EditorContext::Erase => {
+                    if context == EditorContext::Paint {
+                        material_control(ui, palette, lang, actions);
+                    }
+                    if aimed.is_none() {
+                        ui.label(egui::RichText::new(lang.text(Text::NoTargetBlock)).color(MUTED));
+                    }
+                }
+                _ => {}
             }
         }
     });
@@ -977,6 +1320,74 @@ fn inspector(
     .default_open(false)
     .show_unindented(ui, |ui| {
         inspector_card(ui, |ui| clipboard_contents(ui, clipboard, lang));
+    });
+}
+
+fn material_control(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    ui.label(
+        egui::RichText::new(lang.text(Text::ActiveMaterial))
+            .small()
+            .color(MUTED),
+    );
+    let state = palette.active();
+    let label = palette::block_name(state, lang);
+    if appearance::button(
+        ui,
+        Some(Icon::Cube),
+        &label,
+        lang.text(Text::BlockPalette),
+        ButtonStyle::Quiet,
+        true,
+    )
+    .on_hover_text(&state.name)
+    .clicked()
+    {
+        actions.editor = Some((Action::OpenPalette, None));
+    }
+}
+
+fn region_controls(
+    ui: &mut egui::Ui,
+    view: &mut View,
+    volume: Volume,
+    palette: &Palette,
+    lang: Language,
+    actions: &mut WindowActions,
+) {
+    material_control(ui, palette, lang, actions);
+    ui.label(
+        egui::RichText::new(lang.text(Text::ReplaceSource))
+            .small()
+            .color(MUTED),
+    );
+    ui.add(
+        egui::TextEdit::singleline(&mut view.replace_source)
+            .hint_text("minecraft:stone")
+            .desired_width(f32::INFINITY),
+    );
+    let source = view.replace_source.trim();
+    let matching = (!source.is_empty()).then(|| {
+        if source.contains(':') {
+            source.to_owned()
+        } else {
+            format!("minecraft:{source}")
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        for (key, allowed, filter) in [
+            (Text::RegionFill, true, None),
+            (Text::RegionReplace, matching.is_some(), matching),
+        ] {
+            let label = lang.text(key);
+            if appearance::button(ui, None, label, label, ButtonStyle::Quiet, allowed).clicked() {
+                actions.region = Some((volume, palette.active().clone(), filter));
+            }
+        }
     });
 }
 
@@ -1013,41 +1424,47 @@ fn world_heading(ui: &mut egui::Ui, name: &str) {
 fn tools_context(view: &View) -> EditorContext {
     if view.preview.is_some() {
         EditorContext::Place
-    } else if view.selecting {
-        EditorContext::Select
     } else {
-        EditorContext::Explore
+        view.tool
     }
 }
 
 fn action_enabled(action: Action, view: &View, clipboard: &Clipboard, captured: bool) -> bool {
-    if view.stream.is_none() || view.paste.writes() || !action.allowed_in(tools_context(view)) {
+    if action == Action::CameraRelease {
+        return captured;
+    }
+    if view.stream.is_none() || !action.allowed_in(tools_context(view)) {
         return false;
     }
-    if view.paste.locks_preview() {
-        return action == Action::CancelPaste && view.preview.is_some();
+    match action {
+        Action::ToggleCameraCapture if captured => return !view.paste.writes(),
+        Action::CancelPaste => return !view.paste.writes() && view.preview.is_some(),
+        _ if view.paste.locks_preview() => return false,
+        _ => {}
     }
     match action {
+        Action::Save => !view.copying && view.edits.dirty(),
+        Action::Undo => view.edits.can_undo(),
+        Action::Redo => view.edits.can_redo(),
+        Action::OpenPalette
+        | Action::ToggleCameraCapture
+        | Action::PinInspection
+        | Action::PaintBlock
+        | Action::EraseBlock => true,
         Action::Copy => {
-            !captured
-                && !clipboard.copying()
+            !clipboard.copying()
                 && view.selection.picking.is_none()
                 && view
                     .selection
                     .volume()
                     .is_some_and(|volume| volume.validate().is_ok())
         }
-        Action::StartPaste => !captured && clipboard.current.is_some(),
-        Action::Place | Action::RepeatPlace => {
-            !captured
-                && view
-                    .preview
-                    .as_ref()
-                    .is_some_and(|preview| preview.target_valid)
-        }
-        Action::CancelPaste => view.preview.is_some(),
-        Action::MarkCorner => !captured && view.selection.picking.is_some(),
-        Action::CancelSelection => view.selection.picking.is_some(),
+        Action::StartPaste => clipboard.current.is_some(),
+        Action::Place | Action::RepeatPlace => view
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.target_valid || preview.moving),
+        Action::MarkCorner | Action::CancelSelection => view.selection.picking.is_some(),
         _ => false,
     }
 }
@@ -1064,9 +1481,36 @@ pub(crate) fn execute_action(
     }
     let Some(stream) = &view.stream else { return };
     match action {
+        Action::Save => {
+            paste::start_save(view);
+        }
+        Action::Undo | Action::Redo => {
+            let result = if action == Action::Undo {
+                view.edits.undo()
+            } else {
+                view.edits.redo()
+            };
+            match result {
+                Ok(Some(count)) => {
+                    view.paste = if action == Action::Undo {
+                        PasteState::Undone(count)
+                    } else {
+                        PasteState::Redone(count)
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => view.paste = PasteState::Error(Diagnostic::from_error(error)),
+            }
+            view.preview_cancelled = false;
+        }
         Action::Copy => {
             if let Some(volume) = view.selection.volume() {
-                match clipboard.request(document, stream.source(), volume) {
+                match clipboard.request(
+                    document,
+                    stream.source(),
+                    volume,
+                    view.edits.patch_in(volume),
+                ) {
                     Ok(()) => {
                         view.copying = true;
                         view.copy_notice = None;
@@ -1110,6 +1554,14 @@ pub(crate) fn execute_action(
                     repeat: action == Action::RepeatPlace,
                 },
             );
+        }
+        Action::PinInspection => {
+            if view.inspection_pinned && view.inspected == hit.map(|hit| hit.position) {
+                view.inspection_pinned = false;
+            } else if let Some(hit) = hit {
+                view.inspected = Some(hit.position);
+                view.inspection_pinned = true;
+            }
         }
         Action::MarkCorner => {
             selection::mark_corner(&mut view.selection, hit.map(|hit| hit.position))
@@ -1173,6 +1625,15 @@ fn status_bar(
                             .on_hover_text(Diagnostic::from_detail(error).message(lang));
                         }
                     }
+                    if view.edits.dirty() {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(
+                                lang.format(Text::SavePending, &[&view.edits.pending_count()]),
+                            )
+                            .color(ALERT),
+                        );
+                    }
                     if let Some((status, color, spinner)) = notice {
                         if scene {
                             ui.separator();
@@ -1215,18 +1676,15 @@ fn status_notice(
         return Some((message, MUTED, true));
     }
     let notice = match &view.paste {
-        PasteState::Saving(..) => (world(Text::PasteWriting), MUTED, true),
-        PasteState::Preparing(..) => (world(Text::PasteChecking), MUTED, true),
-        PasteState::Error(_) | PasteState::TargetChanged => {
-            (world(Text::PasteFailed), ALERT, false)
-        }
+        PasteState::Saving(..) => (world(Text::SavingWorld), MUTED, true),
+        PasteState::Preparing(..) => (world(Text::EditChecking), MUTED, true),
+        PasteState::Error(error) => (error.message(lang), ALERT, false),
+        PasteState::Edited(count) => (lang.format(Text::BlocksEdited, &[count]), ACCENT, false),
+        PasteState::Undone(count) => (lang.format(Text::BlocksUndone, &[count]), ACCENT, false),
+        PasteState::Redone(count) => (lang.format(Text::BlocksRedone, &[count]), ACCENT, false),
         _ if view.copying => (world(Text::CopyingWorld), MUTED, true),
         _ if view.preview_cancelled => (lang.text(Text::PasteCancelled).into(), MUTED, false),
-        PasteState::Saved(result) => (
-            lang.format(Text::PasteSaved, &[&result.summary.world_name]),
-            ACCENT,
-            false,
-        ),
+        PasteState::Saved(_) => (world(Text::WorldSaved), ACCENT, false),
         _ if view.preview.is_some() => (world(Text::PreviewDestination), MUTED, false),
         _ => match &view.copy_notice {
             Some(CopyNotice::Copied([x, y, z])) => (
@@ -1301,6 +1759,9 @@ fn help_bar(
         }
     };
     let editor = [
+        (Action::PinInspection, Text::InspectBlock),
+        (Action::PaintBlock, Text::PaintBlock),
+        (Action::EraseBlock, Text::EraseBlock),
         (Action::MarkCorner, Text::ActionMark),
         (Action::CancelSelection, Text::ActionCancel),
         (Action::Copy, Text::ActionCopy),
@@ -1308,6 +1769,8 @@ fn help_bar(
         (Action::Place, Text::ActionPlace),
         (Action::RepeatPlace, Text::ActionRepeat),
         (Action::CancelPaste, Text::ActionCancel),
+        (Action::Save, Text::SaveWorld),
+        (Action::OpenPalette, Text::BlockPalette),
     ];
     for (action, label) in editor {
         if bindings.available(action, context) && action_enabled(action, view, clipboard, captured)
@@ -1334,9 +1797,17 @@ fn help_bar(
             Text::CameraHeight,
         );
         hint(binding(Action::CameraBoost), Text::CameraBoost);
-        hint(binding(Action::CameraRelease), Text::CameraRelease);
+        if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
+            hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
+        }
+        if !(view.preview.is_some() || view.selection.picking.is_some()) {
+            hint(binding(Action::CameraRelease), Text::CameraRelease);
+        }
     } else {
         hint(binding(Action::CameraLook), Text::CameraLook);
+        if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
+            hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
+        }
     }
 }
 
@@ -1429,80 +1900,78 @@ fn paste_status(
     lang: Language,
 ) -> Option<PasteAction> {
     match state {
-        PasteState::Idle | PasteState::Saving(..) | PasteState::Preparing(Some(_), _) => None,
-        PasteState::Preparing(None, _) => ui
+        PasteState::Idle
+        | PasteState::Saving(_)
+        | PasteState::Edited(_)
+        | PasteState::Undone(_)
+        | PasteState::Redone(_) => None,
+        PasteState::Preparing(EditIntent::Single, _)
+        | PasteState::Preparing(EditIntent::Paste { confirm: false, .. }, _) => None,
+        PasteState::Preparing(..) => ui
             .small_button(lang.text(Text::CancelPreparation))
             .clicked()
             .then_some(PasteAction::Discard),
-        PasteState::Ready(plan) => {
-            ui.label(
-                egui::RichText::new(lang.text(Text::ManualConfirm))
-                    .strong()
-                    .color(ALERT),
-            );
-            paste_summary(ui, &plan.summary, lang);
-            ui.label(lang.text(Text::BackupBeforeWrite));
-            if ui.button(lang.text(Text::ReturnToPreview)).clicked() {
-                return Some(PasteAction::Discard);
+        PasteState::Ready(intent, operation) => {
+            if let EditIntent::Region {
+                volume,
+                material,
+                matching,
+            } = intent
+            {
+                let [x, y, z] = volume.dimensions();
+                ui.label(lang.format(Text::Dimensions, &[&x, &y, &z]));
+                if let Some(matching) = matching {
+                    ui.label(lang.format(Text::RegionFilter, &[matching, material]));
+                } else {
+                    ui.label(lang.format(Text::RegionMaterial, &[material]));
+                }
+                if operation.len() >= 32_768 {
+                    ui.label(egui::RichText::new(lang.text(Text::RegionLarge)).color(ALERT));
+                }
             }
-            appearance::button(
-                ui,
-                Some(Icon::Clipboard),
-                lang.text(Text::ConfirmPaste),
-                lang.text(Text::ConfirmPaste),
-                ButtonStyle::Primary,
-                true,
-            )
-            .clicked()
-            .then_some(PasteAction::Confirm)
+            ui.label(
+                egui::RichText::new(lang.format(Text::RegionAffected, &[&operation.len()]))
+                    .strong(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                let apply = lang.text(Text::ApplyMemory);
+                let cancel = lang.text(Text::ActionCancel);
+                if appearance::button(ui, None, apply, apply, ButtonStyle::Primary, true).clicked()
+                {
+                    Some(PasteAction::Confirm)
+                } else if appearance::button(ui, None, cancel, cancel, ButtonStyle::Quiet, true)
+                    .clicked()
+                {
+                    Some(PasteAction::Discard)
+                } else {
+                    None
+                }
+            })
+            .inner
         }
         PasteState::Saved(result) => {
-            ui.collapsing(lang.text(Text::Backup), |ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(result.backup.display().to_string()).monospace(),
-                    )
-                    .wrap(),
-                );
-            });
+            ui.label(lang.format(Text::WorldSavedCount, &[&result.blocks]));
+            if let Some(backup) = &result.backup {
+                ui.collapsing(lang.text(Text::Backup), |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(backup.display().to_string()).monospace(),
+                        )
+                        .wrap(),
+                    );
+                });
+            }
             ui.small_button(lang.text(Text::CloseNotice))
                 .clicked()
                 .then_some(PasteAction::Discard)
         }
         PasteState::Error(error) => {
-            diagnostic(ui, &lang.format(Text::PasteFailed, &[&name]), error, lang);
-            ui.small_button(lang.text(Text::CloseNotice))
-                .clicked()
-                .then_some(PasteAction::Discard)
-        }
-        PasteState::TargetChanged => {
-            ui.label(egui::RichText::new(lang.text(Text::PasteTargetChanged)).color(ALERT));
+            diagnostic(ui, &lang.format(Text::EditFailed, &[&name]), error, lang);
             ui.small_button(lang.text(Text::CloseNotice))
                 .clicked()
                 .then_some(PasteAction::Discard)
         }
     }
-}
-
-fn paste_summary(ui: &mut egui::Ui, summary: &PasteSummary, lang: Language) {
-    ui.label(egui::RichText::new(&summary.world_name).strong());
-    ui.add(
-        egui::Label::new(egui::RichText::new(summary.world_path.display().to_string()).monospace())
-            .wrap(),
-    );
-    let [x, y, z] = summary.volume.min;
-    ui.monospace(lang.format(Text::From, &[&x, &y, &z]));
-    let [x, y, z] = summary.volume.max;
-    ui.monospace(lang.format(Text::To, &[&x, &y, &z]));
-    let mode = lang.text(if summary.mode == AirMode::Include {
-        Text::IncludeAir
-    } else {
-        Text::IgnoreAir
-    });
-    ui.label(lang.format(
-        Text::PasteSummary,
-        &[&mode, &summary.chunks, &summary.regions],
-    ));
 }
 
 fn preview_controls(

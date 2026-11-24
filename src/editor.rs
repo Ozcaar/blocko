@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{
+    collections::{HashSet, VecDeque},
+    fs,
+    path::PathBuf,
+};
 
 use bevy::{
     camera::{RenderTarget, visibility::RenderLayers},
@@ -14,11 +18,13 @@ use bevy::{
 use bevy_egui::{EguiContextSettings, EguiGlobalSettings, EguiPlugin};
 
 use crate::{
-    actions::Bindings,
+    actions::{Bindings, EditorContext},
     diagnostics::Diagnostic,
+    edit::EditSession,
     flight::{self, Flight},
     i18n::{Language, Text},
     java::JavaWorld,
+    palette::{Palette, Search},
     paste::{self, PasteState},
     placement::{AirMode, Placement},
     preview_visual,
@@ -41,7 +47,11 @@ pub struct View {
     pub selection: Selection,
     pub copying: bool,
     pub copy_notice: Option<structure::CopyNotice>,
-    pub selecting: bool,
+    pub tool: EditorContext,
+    pub edits: EditSession,
+    pub replace_source: String,
+    pub inspected: Option<[i32; 3]>,
+    pub inspection_pinned: bool,
     pub air_mode: AirMode,
     pub preview_cancelled: bool,
     pub preview: Option<Placement>,
@@ -59,6 +69,8 @@ pub struct Workspace {
     pub notice: Option<OpenNotice>,
     pub dragging: Option<Entity>,
     pub blocks_camera: bool,
+    pub leave: Option<LeaveRequest>,
+    pub search: Option<Search>,
 }
 
 impl Workspace {
@@ -70,6 +82,25 @@ impl Workspace {
             notice: None,
             dragging: None,
             blocks_camera: false,
+            leave: None,
+            search: None,
+        }
+    }
+
+    pub fn request_open(
+        &mut self,
+        destination: Destination,
+        language: Language,
+        parent: Option<ui::DialogParent>,
+        dirty: bool,
+    ) {
+        if matches!(destination, Destination::Replace) && dirty {
+            self.leave = Some(LeaveRequest::new(
+                LeaveIntent::Replace(language, parent),
+                [self.active],
+            ));
+        } else {
+            self.pending = Some(PendingOpen::browse(destination, language, parent));
         }
     }
 }
@@ -79,6 +110,46 @@ pub enum Destination {
     Tab,
     Replace,
     NewWindow,
+}
+
+enum LeaveIntent {
+    Tab(Entity),
+    Window,
+    Replace(Language, Option<ui::DialogParent>),
+}
+
+pub struct LeaveRequest {
+    intent: LeaveIntent,
+    documents: VecDeque<Entity>,
+    pub saving: bool,
+}
+
+impl LeaveRequest {
+    fn new(intent: LeaveIntent, documents: impl IntoIterator<Item = Entity>) -> Self {
+        Self {
+            intent,
+            documents: documents.into_iter().collect(),
+            saving: false,
+        }
+    }
+
+    pub fn document(&self) -> Option<Entity> {
+        self.documents.front().copied()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum LeaveChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+#[derive(Message)]
+pub struct LeaveDecision {
+    pub window: Entity,
+    pub document: Entity,
+    pub choice: LeaveChoice,
 }
 
 #[derive(Message)]
@@ -91,6 +162,7 @@ pub struct TabRequest {
 pub enum TabAction {
     Activate,
     Close,
+    CloseApproved,
     Detach(Option<IVec2>),
 }
 
@@ -203,6 +275,8 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
         .init_resource::<Bindings>()
         .init_resource::<Language>()
         .add_message::<TabRequest>()
+        .add_message::<LeaveDecision>()
+        .init_resource::<Palette>()
         .init_resource::<Clipboard>()
         .add_systems(Startup, (setup, preview_visual::setup).chain())
         .add_systems(Startup, selection::setup)
@@ -210,6 +284,7 @@ pub fn run(path: Option<PathBuf>, demo: bool) {
             Update,
             (
                 paste::finish,
+                finish_leaving,
                 close_windows,
                 finish_opening,
                 manage_tabs,
@@ -344,7 +419,11 @@ fn new_view(commands: &mut Commands, owner: Entity, layer: usize) -> Entity {
         selection: Selection::default(),
         copying: false,
         copy_notice: None,
-        selecting: false,
+        tool: EditorContext::Explore,
+        edits: EditSession::default(),
+        replace_source: String::new(),
+        inspected: None,
+        inspection_pinned: false,
         air_mode: AirMode::default(),
         preview_cancelled: false,
         preview: None,
@@ -384,18 +463,102 @@ fn add_world(commands: &mut Commands, owner: Entity, layer: usize, world: JavaWo
 fn close_windows(
     mut commands: Commands,
     mut requests: MessageReader<WindowCloseRequested>,
-    windows: Query<&Workspace>,
+    mut windows: Query<&mut Workspace>,
     views: Query<&View>,
 ) {
     for request in requests.read() {
-        if !windows.get(request.window).is_ok_and(|workspace| {
-            workspace.pending.is_some()
-                || workspace
-                    .tabs
-                    .iter()
-                    .any(|tab| views.get(*tab).is_ok_and(|view| view.paste.writes()))
-        }) {
+        let Ok(mut workspace) = windows.get_mut(request.window) else {
             commands.entity(request.window).try_despawn();
+            continue;
+        };
+        if workspace.pending.is_some()
+            || workspace.leave.is_some()
+            || workspace
+                .tabs
+                .iter()
+                .any(|tab| views.get(*tab).is_ok_and(|view| view.paste.busy()))
+        {
+            continue;
+        }
+        let dirty: Vec<_> = workspace
+            .tabs
+            .iter()
+            .copied()
+            .filter(|tab| views.get(*tab).is_ok_and(|view| view.edits.dirty()))
+            .collect();
+        if dirty.is_empty() {
+            commands.entity(request.window).try_despawn();
+        } else {
+            workspace.search = None;
+            workspace.leave = Some(LeaveRequest::new(LeaveIntent::Window, dirty));
+        }
+    }
+}
+
+fn finish_leaving(
+    mut commands: Commands,
+    mut decisions: MessageReader<LeaveDecision>,
+    mut windows: Query<(Entity, &mut Workspace)>,
+    mut views: Query<&mut View>,
+    mut tabs: MessageWriter<TabRequest>,
+) {
+    for decision in decisions.read() {
+        let Ok((_, mut workspace)) = windows.get_mut(decision.window) else {
+            continue;
+        };
+        let Some(leave) = &mut workspace.leave else {
+            continue;
+        };
+        if leave.saving || leave.document() != Some(decision.document) {
+            continue;
+        }
+        match decision.choice {
+            LeaveChoice::Cancel => workspace.leave = None,
+            LeaveChoice::Discard => {
+                leave.documents.pop_front();
+            }
+            LeaveChoice::Save => {
+                if let Ok(mut view) = views.get_mut(decision.document) {
+                    leave.saving = paste::start_save(&mut view);
+                }
+            }
+        }
+    }
+    for (window, mut workspace) in &mut windows {
+        let Some(leave) = &mut workspace.leave else {
+            continue;
+        };
+        if leave.saving
+            && let Some(document) = leave.document()
+            && let Ok(view) = views.get(document)
+            && !view.paste.writes()
+        {
+            leave.saving = false;
+            if !view.edits.dirty() {
+                leave.documents.pop_front();
+            }
+        }
+        if !leave.documents.is_empty() {
+            continue;
+        }
+        let Some(leave) = workspace.leave.take() else {
+            continue;
+        };
+        match leave.intent {
+            LeaveIntent::Tab(tab) => {
+                tabs.write(TabRequest {
+                    window,
+                    tab,
+                    action: TabAction::CloseApproved,
+                });
+            }
+            LeaveIntent::Window => {
+                commands.entity(window).try_despawn();
+            }
+            LeaveIntent::Replace(language, parent) => {
+                workspace.pending =
+                    Some(PendingOpen::browse(Destination::Replace, language, parent));
+            }
         }
     }
 }
@@ -541,12 +704,22 @@ fn manage_tabs(
         };
         let read = views.p0();
         if workspace.pending.is_some()
-            || read.get(old).is_ok_and(|view| view.paste.writes())
-            || read.get(request.tab).is_ok_and(|view| view.paste.writes())
+            || workspace.leave.is_some()
+            || read.get(old).is_ok_and(|view| view.paste.busy())
+            || read.get(request.tab).is_ok_and(|view| view.paste.busy())
         {
             continue;
         }
         if matches!(request.action, TabAction::Activate) && request.tab == old {
+            continue;
+        }
+        if matches!(request.action, TabAction::Close)
+            && read.get(request.tab).is_ok_and(|view| view.edits.dirty())
+        {
+            workspace.leave = Some(LeaveRequest::new(
+                LeaveIntent::Tab(request.tab),
+                [request.tab],
+            ));
             continue;
         }
         if request.tab == old || matches!(request.action, TabAction::Activate) {
@@ -559,7 +732,7 @@ fn manage_tabs(
         }
         match request.action {
             TabAction::Activate => workspace.active = request.tab,
-            TabAction::Close => {
+            TabAction::Close | TabAction::CloseApproved => {
                 workspace.tabs.remove(index);
                 commands.entity(request.tab).try_despawn();
             }
@@ -665,7 +838,7 @@ fn stream_worlds(
         let Ok(mut view) = views.get_mut(workspace.active) else {
             continue;
         };
-        if view.paste.is_saving() {
+        if view.paste.writes() {
             continue;
         }
         let layer = view.layer;
@@ -681,6 +854,7 @@ fn stream_worlds(
                 layer,
                 camera.translation,
                 view.preview.as_ref().filter(|preview| preview.target_valid),
+                &mut view.edits,
             );
         }
     }
@@ -718,7 +892,12 @@ mod tests {
                     .context("Missing document")?;
                 let stream = view.stream.as_ref().context("Missing world")?;
                 let volume = view.selection.volume().context("Missing selection")?;
-                clipboard.request(document, stream.source(), volume)?;
+                clipboard.request(
+                    document,
+                    stream.source(),
+                    volume,
+                    view.edits.patch_in(volume),
+                )?;
                 view.copying = true;
                 Ok(())
             })?;
@@ -735,12 +914,15 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_message::<TabRequest>()
+            .add_message::<LeaveDecision>()
+            .init_resource::<Palette>()
             .init_resource::<Clipboard>()
             .add_message::<WindowCloseRequested>()
             .add_systems(
                 Update,
                 (
                     paste::finish,
+                    finish_leaving,
                     close_windows,
                     finish_opening,
                     structure::finish_copying,
@@ -959,7 +1141,8 @@ mod tests {
 
     #[test]
     #[ignore = "requires BLOCKO_TEST_WORLDS with copies of Bosque and Pradera in Java 1.21.1"]
-    fn cancels_without_writing_and_commits_each_repeated_placement_to_its_document() -> Result<()> {
+    fn edits_on_detached_document_save_only_on_request_and_can_be_undone_after_save() -> Result<()>
+    {
         use crate::paste::PasteAction;
         use crate::world::{BlockEntity, BlockEntityRecord, ChunkPos};
 
@@ -969,7 +1152,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
         let scratch =
-            std::env::temp_dir().join(format!("blocko-v020-paste-{}-{unique}", std::process::id()));
+            std::env::temp_dir().join(format!("blocko-v030-edit-{}-{unique}", std::process::id()));
         fs::create_dir(&scratch)?;
         let original = fixtures.join("Pradera");
         for file in ["level.dat", "session.lock"] {
@@ -1039,7 +1222,7 @@ mod tests {
                 })?;
                 assert!(matches!(
                     app.world().get::<View>(pradera).unwrap().paste,
-                    PasteState::Ready(_)
+                    PasteState::Ready(..)
                 ));
             }
             cancel(&mut app);
@@ -1062,7 +1245,6 @@ mod tests {
         let detached = app.world().get::<View>(pradera).unwrap().owner;
         app.world_mut().get_mut::<View>(pradera).unwrap().preview = Some(preview);
         let origins = [[4, 90, -46], [8, 90, -46], [12, 90, -46], [15, 90, -46]];
-        let mut backups = HashSet::new();
         for (index, origin) in origins.into_iter().enumerate() {
             let repeat = index != origins.len() - 1;
             {
@@ -1071,33 +1253,143 @@ mod tests {
                 paste::apply_action(&mut view, PasteAction::Place { repeat });
                 paste::apply_action(&mut view, PasteAction::Place { repeat: false });
             }
-            cancel(&mut app);
-            assert!(matches!(
-                &app.world().get::<View>(pradera).unwrap().paste,
-                PasteState::Preparing(Some(value), _) if *value == repeat
-            ));
-            app.world_mut()
-                .write_message(WindowCloseRequested { window: detached });
             settle(&mut app, |world| {
-                world
-                    .get::<View>(pradera)
-                    .is_some_and(|view| !view.paste.writes())
+                !world.get::<View>(pradera).unwrap().paste.busy()
             })?;
             let view = app.world().get::<View>(pradera).unwrap();
-            let PasteState::Saved(result) = &view.paste else {
-                if let PasteState::Error(error) = &view.paste {
-                    anyhow::bail!("{}", error.detail());
-                }
-                anyhow::bail!("Placement did not save");
-            };
-            assert_eq!(result.summary.volume.min, origin);
-            assert!(backups.insert(result.backup.clone()));
+            if let PasteState::Error(error) = &view.paste {
+                anyhow::bail!("{}", error.detail());
+            }
+            assert!(matches!(view.paste, PasteState::Edited(1)));
             assert_eq!(view.preview.is_some(), repeat);
+            assert_eq!(view.edits.pending_count(), index + 1);
         }
+        assert_eq!(inventory(&scratch)?, before);
+        assert!(!scratch.join("blocko-backups").exists());
+        assert!(!app.world().get::<View>(bosque).unwrap().edits.dirty());
+
+        {
+            let mut view = app.world_mut().get_mut::<View>(bosque).unwrap();
+            let target = [14, 73, -50];
+            let state = crate::world::BlockState {
+                name: "minecraft:stone".into(),
+                properties: Default::default(),
+            };
+            paste::set_blocks(
+                &mut view,
+                structure::Volume::between(target, target),
+                state,
+                None,
+                false,
+            );
+        }
+        settle(&mut app, |world| {
+            !world.get::<View>(bosque).unwrap().paste.busy()
+        })?;
+        assert!(app.world().get::<View>(bosque).unwrap().edits.dirty());
+        assert_eq!(inventory(&bosque_path)?, source_before);
+
+        app.world_mut()
+            .write_message(WindowCloseRequested { window: detached });
+        app.update();
         assert_eq!(
-            fs::read_dir(scratch.join("blocko-backups"))?.count(),
-            origins.len()
+            app.world()
+                .get::<Workspace>(detached)
+                .unwrap()
+                .leave
+                .as_ref()
+                .unwrap()
+                .document(),
+            Some(pradera)
         );
+        app.world_mut().write_message(LeaveDecision {
+            window: detached,
+            document: pradera,
+            choice: LeaveChoice::Cancel,
+        });
+        app.update();
+        assert!(
+            app.world()
+                .get::<Workspace>(detached)
+                .unwrap()
+                .leave
+                .is_none()
+        );
+
+        app.world_mut()
+            .get_mut::<View>(pradera)
+            .unwrap()
+            .selection
+            .corners = [Some(origins[0]); 2];
+        select_and_copy(&mut app, pradera)?;
+        let copied = app
+            .world()
+            .resource::<Clipboard>()
+            .current
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            copied.block_at([0; 3]).unwrap().properties["facing"],
+            "east"
+        );
+        assert!(
+            matches!(copied.block_entity_at([0; 3]), Some(BlockEntity::Chest { items, .. }) if !items.is_empty())
+        );
+
+        let concurrent_reader = JavaWorld::open(&scratch)?;
+        {
+            let mut view = app.world_mut().get_mut::<View>(pradera).unwrap();
+            assert_eq!(view.edits.undo()?, Some(1));
+            assert_eq!(view.edits.redo()?, Some(1));
+            assert!(paste::start_save(&mut view));
+        }
+        settle(&mut app, |world| {
+            !world.get::<View>(pradera).unwrap().paste.writes()
+        })?;
+        let view = app.world().get::<View>(pradera).unwrap();
+        assert!(matches!(view.paste, PasteState::Error(_)));
+        assert_eq!(view.edits.pending_count(), origins.len());
+        assert_eq!(inventory(&scratch)?, before);
+        assert!(!scratch.join("blocko-backups").exists());
+        drop(concurrent_reader);
+
+        {
+            let mut view = app.world_mut().get_mut::<View>(pradera).unwrap();
+            assert!(paste::start_save(&mut view));
+        }
+        settle(&mut app, |world| {
+            !world.get::<View>(pradera).unwrap().paste.writes()
+        })?;
+        let view = app.world().get::<View>(pradera).unwrap();
+        let PasteState::Saved(result) = &view.paste else {
+            if let PasteState::Error(error) = &view.paste {
+                anyhow::bail!("{}", error.detail());
+            }
+            anyhow::bail!("Document was not saved");
+        };
+        assert_eq!(result.blocks, origins.len());
+        assert!(result.backup.as_ref().is_some_and(|path| path.is_dir()));
+        assert!(!view.edits.dirty());
+        assert_eq!(fs::read_dir(scratch.join("blocko-backups"))?.count(), 1);
+        assert!(app.world().get::<View>(bosque).unwrap().edits.dirty());
+        tab(&mut app, window, bosque, TabAction::Close);
+        assert_eq!(
+            app.world()
+                .get::<Workspace>(window)
+                .unwrap()
+                .leave
+                .as_ref()
+                .unwrap()
+                .document(),
+            Some(bosque)
+        );
+        app.world_mut().write_message(LeaveDecision {
+            window,
+            document: bosque,
+            choice: LeaveChoice::Discard,
+        });
+        app.update();
+        assert!(app.world().get::<View>(bosque).is_none());
         assert_eq!(inventory(&bosque_path)?, source_before);
         assert_eq!(inventory(&original)?, before);
         for (region, hash) in inventory(&scratch)? {
@@ -1126,6 +1418,32 @@ mod tests {
                     if items.iter().any(|item| item.slot == 16 && item.id == "minecraft:diamond" && item.count == 1)
             ));
         }
+        let saved = inventory(&scratch)?;
+        {
+            let mut view = app.world_mut().get_mut::<View>(pradera).unwrap();
+            assert_eq!(view.edits.undo()?, Some(1));
+            assert!(view.edits.dirty());
+        }
+        assert_eq!(inventory(&scratch)?, saved);
+        {
+            let mut view = app.world_mut().get_mut::<View>(pradera).unwrap();
+            assert!(paste::start_save(&mut view));
+        }
+        settle(&mut app, |world| {
+            !world.get::<View>(pradera).unwrap().paste.writes()
+        })?;
+        assert!(!app.world().get::<View>(pradera).unwrap().edits.dirty());
+        let [x, y, z] = origins[3];
+        let pos = ChunkPos::from_block(x, z);
+        let chunk = world.load_chunk_for_copy(pos)?.unwrap();
+        assert!(chunk.block_entities.get(&[x, y, z]).is_none());
+        let original = JavaWorld::open(&original)?
+            .load_chunk_for_copy(pos)?
+            .unwrap();
+        assert_eq!(
+            chunk.block(x.rem_euclid(16), y, z.rem_euclid(16)),
+            original.block(x.rem_euclid(16), y, z.rem_euclid(16))
+        );
         Ok(())
     }
 }

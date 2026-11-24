@@ -31,7 +31,9 @@ enum Kind {
     UnsupportedDestination,
     InvalidChunk,
     NoChanges,
-    PasteTooLarge,
+    SaveTooLarge,
+    PendingChangesLimit,
+    EditConflict,
     Permission,
     MissingFile,
     DiskFull,
@@ -100,12 +102,15 @@ impl Diagnostic {
 
 fn specific_kind(cause: &str) -> Option<Kind> {
     const PREFIXES: &[(&str, Kind)] = &[
-        ("Falló el pegado:", Kind::RecoveryPending),
+        ("Falló el guardado:", Kind::RecoveryPending),
         (
             "Se restauraron las regiones tras el fallo:",
             Kind::WriteRolledBack,
         ),
-        ("Quedó un pegado pendiente en ", Kind::RecoveryPending),
+        (
+            "Quedó una restauración pendiente en ",
+            Kind::RecoveryPending,
+        ),
         ("Registro de respaldo ", Kind::RecoveryPending),
         (
             "Falta la identidad del mundo en el registro de respaldo",
@@ -170,6 +175,7 @@ fn specific_kind(cause: &str) -> Option<Kind> {
             Kind::MissingTerrain,
         ),
         ("La sección de destino en ", Kind::MissingTerrain),
+        ("Falta el bloque de destino", Kind::MissingTerrain),
         (
             "Entidades de bloque de destino incompatibles",
             Kind::UnsupportedDestination,
@@ -182,17 +188,33 @@ fn specific_kind(cause: &str) -> Option<Kind> {
             "Faltan datos compatibles de la entidad",
             Kind::UnsupportedDestination,
         ),
+        (
+            "La entidad de bloque no corresponde al estado solicitado",
+            Kind::UnsupportedDestination,
+        ),
         ("Bloque de mod no compatible", Kind::UnsupportedDestination),
         ("El cambio en ", Kind::UnsupportedDestination),
+        ("El pegado afecta ", Kind::UnsupportedDestination),
+        (
+            "El chunk de destino tiene una actualización de versión pendiente",
+            Kind::UnsupportedDestination,
+        ),
         (
             "La vista previa no cambiaría ningún bloque",
             Kind::NoChanges,
         ),
-        ("El pegado requiere preparar más de ", Kind::PasteTooLarge),
+        ("La operación no cambiaría ningún bloque", Kind::NoChanges),
+        ("El guardado requiere preparar más de ", Kind::SaveTooLarge),
+        ("El pegado requiere preparar más de ", Kind::SaveTooLarge),
         (
-            "El archivo es demasiado grande para preparar el pegado",
-            Kind::PasteTooLarge,
+            "El archivo es demasiado grande para preparar el guardado",
+            Kind::SaveTooLarge,
         ),
+        (
+            "Hay demasiados cambios pendientes.",
+            Kind::PendingChangesLimit,
+        ),
+        ("La edición cambió durante la operación", Kind::EditConflict),
     ];
     if let Some((_, kind)) = PREFIXES
         .iter()
@@ -210,6 +232,15 @@ fn specific_kind(cause: &str) -> Option<Kind> {
         .any(|fragment| cause.contains(fragment))
     {
         return Some(Kind::WorldChanged);
+    }
+    if cause.starts_with("La posición ") && cause.ends_with("fuera de los límites del Overworld")
+    {
+        return Some(Kind::OutsideWorld);
+    }
+    if cause.starts_with("El bloque en ")
+        && cause.ends_with("tiene etiquetas de paleta incompatibles")
+    {
+        return Some(Kind::UnsupportedDestination);
     }
     if let Some(chunk) = cause.strip_prefix("El chunk (")
         && let Some((_, reason)) = chunk.split_once(") ")
@@ -257,13 +288,14 @@ fn context_kind(cause: &str) -> Option<Kind> {
 }
 
 fn backup_location(cause: &str) -> Option<String> {
-    if cause.starts_with("Falló el pegado:") || cause.starts_with("Se restauraron las regiones") {
+    if cause.starts_with("Falló el guardado:") || cause.starts_with("Se restauraron las regiones")
+    {
         return cause
             .rsplit_once(". Respaldo: ")
             .map(|(_, path)| path.to_owned());
     }
     cause
-        .strip_prefix("Quedó un pegado pendiente en ")
+        .strip_prefix("Quedó una restauración pendiente en ")
         .map(str::to_owned)
 }
 
@@ -314,10 +346,10 @@ impl Kind {
                 "World files changed outside this operation. Reopen the world in Blocko before trying again."
             }
             Self::Recover => {
-                "A paste still needs recovery. Close this world in Blocko and reopen it before loading it in Minecraft."
+                "A save still needs recovery. Close this world in Blocko and reopen it before loading it in Minecraft."
             }
             Self::RecoveryPending => {
-                "A paste could not be recovered. Keep the backup and reopen the world in Blocko before loading it in Minecraft."
+                "A save could not be recovered. Keep the backup and reopen the world in Blocko before loading it in Minecraft."
             }
             Self::WriteRolledBack => {
                 "Saving failed and Blocko restored the original regions. Keep the backup and check the file permissions before retrying."
@@ -325,9 +357,7 @@ impl Kind {
             Self::ReadOnlyWorld => {
                 "Blocko could not verify this world's files for writing. Check that the world is an intact, writable copy and reopen it."
             }
-            Self::OutsideWorld => {
-                "Move the volume so both corners are inside the Overworld boundaries."
-            }
+            Self::OutsideWorld => "Choose coordinates inside the Overworld boundaries.",
             Self::SelectionTooLarge => "Reduce the selection to at most 1,048,576 blocks.",
             Self::CopyInProgress => "Wait for the current copy to finish, then try again.",
             Self::DoubleChest => {
@@ -337,25 +367,27 @@ impl Kind {
                 "The selection contains unsupported or incomplete block data. Adjust the selection to exclude the affected blocks."
             }
             Self::MissingTerrain => {
-                "The volume crosses terrain that has not been fully generated. Move the volume to a generated area."
+                "Some blocks are in terrain that has not been fully generated. Choose a generated area."
             }
             Self::UnsupportedDestination => {
-                "The destination contains data Blocko cannot safely edit. Move the placement to a different area."
+                "The edit affects data Blocko cannot safely change. Adjust the target or the selected material."
             }
             Self::InvalidChunk => {
                 "Blocko could not read compatible chunk data. Try a different area or an intact copy of the world."
             }
-            Self::NoChanges => {
-                "This placement would leave the destination unchanged. Move the preview or switch the air mode."
+            Self::NoChanges => "This operation would leave the blocks unchanged.",
+            Self::SaveTooLarge => {
+                "The affected region data exceeds the save size limit. Undo edits to save a smaller area."
             }
-            Self::PasteTooLarge => {
-                "The affected region data exceeds the size limit for one paste. Copy and paste a smaller volume."
+            Self::PendingChangesLimit => {
+                "Too many blocks have pending changes. Save the world before continuing."
             }
+            Self::EditConflict => "The edit state changed during the operation. Try again.",
             Self::Permission => {
                 "Access to a required file was denied. Check the world folder permissions and close other apps using it."
             }
             Self::MissingFile => {
-                "A required file is missing. Check that the world folder is complete. For a paste, choose an area with generated terrain."
+                "A required file is missing. Check that the world folder is complete and choose an area with generated terrain."
             }
             Self::DiskFull => {
                 "There is not enough disk space. Free space in the drive containing the world before retrying."
@@ -380,7 +412,7 @@ mod tests {
     fn keeps_the_backup_path_and_distinguishes_recovery_from_a_rollback() {
         let path = r"C:\Mundos de prueba\Bosque\blocko-backups\pegado-123";
         let pending = Diagnostic::from_error(anyhow!(
-            "Falló el pegado: disco. La restauración quedó pendiente: archivo. Respaldo: {path}"
+            "Falló el guardado: disco. La restauración quedó pendiente: archivo. Respaldo: {path}"
         ));
         let rolled_back = Diagnostic::from_error(anyhow!(
             "Se restauraron las regiones tras el fallo: archivo. Respaldo: {path}"
@@ -412,6 +444,25 @@ mod tests {
         let diagnostic = Diagnostic::from_error(error);
         assert_eq!(diagnostic.kind, Kind::Permission);
         assert!(diagnostic.detail().contains("r.0.0.mca"));
+    }
+
+    #[test]
+    fn distinguishes_no_change_from_the_limits_on_editing_and_saving() {
+        let no_change =
+            Diagnostic::from_detail("La operación no cambiaría ningún bloque ni entidad");
+        let pending = Diagnostic::from_detail(
+            "Hay demasiados cambios pendientes. Guarda el mundo antes de seguir",
+        );
+        let save_limit =
+            Diagnostic::from_detail("El guardado requiere preparar más de 256 MiB de regiones");
+        assert_eq!(no_change.kind, Kind::NoChanges);
+        assert_eq!(pending.kind, Kind::PendingChangesLimit);
+        assert_eq!(save_limit.kind, Kind::SaveTooLarge);
+        assert!(
+            pending
+                .message(Language::English)
+                .contains("Save the world")
+        );
     }
 
     #[test]

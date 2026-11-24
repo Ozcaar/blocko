@@ -10,6 +10,7 @@ use bevy::{
 };
 
 use crate::{
+    edit::EditSession,
     java::JavaWorld,
     placement::Placement,
     preview_mask::{self, MaskedMesh},
@@ -40,6 +41,8 @@ pub struct Stream {
     center: Option<ChunkPos>,
     priority: Vec<ChunkPos>,
     loaded: HashMap<ChunkPos, Arc<Chunk>>,
+    overlaid: HashMap<ChunkPos, Arc<Chunk>>,
+    remesh: HashSet<ChunkPos>,
     absent: HashSet<ChunkPos>,
     errors: HashMap<ChunkPos, String>,
     rendered: HashMap<ChunkPos, Option<Entity>>,
@@ -61,6 +64,8 @@ impl Stream {
             center: None,
             priority: Vec::new(),
             loaded: HashMap::new(),
+            overlaid: HashMap::new(),
+            remesh: HashSet::new(),
             absent: HashSet::new(),
             errors: HashMap::new(),
             rendered: HashMap::new(),
@@ -90,7 +95,36 @@ impl Stream {
     }
 
     pub fn loaded_chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
-        self.loaded.get(&pos).map(Arc::as_ref)
+        self.visible_chunk(pos).map(Arc::as_ref)
+    }
+
+    fn visible_chunk(&self, pos: ChunkPos) -> Option<&Arc<Chunk>> {
+        self.overlaid.get(&pos).or_else(|| self.loaded.get(&pos))
+    }
+
+    fn sync_edits(&mut self, commands: &mut Commands, edits: &mut EditSession) {
+        let invalidated = edits.take_invalidated();
+        if invalidated.is_empty() {
+            return;
+        }
+        self.clear_preview(commands);
+        for pos in invalidated {
+            if let Some(base) = self.loaded.get(&pos) {
+                if let Some(patch) = edits.patch_for(pos) {
+                    let mut chunk = (**base).clone();
+                    chunk.apply_patch(&patch);
+                    self.overlaid.insert(pos, Arc::new(chunk));
+                } else {
+                    self.overlaid.remove(&pos);
+                }
+            }
+            for target in std::iter::once(pos).chain(pos.neighbors()) {
+                self.meshes.remove(&target);
+                if self.rendered.contains_key(&target) {
+                    self.remesh.insert(target);
+                }
+            }
+        }
     }
 
     pub fn preview_busy(&self) -> bool {
@@ -113,12 +147,14 @@ impl Stream {
         layer: usize,
         position: Vec3,
         placement: Option<&Placement>,
+        edits: &mut EditSession,
     ) {
         let center = ChunkPos::from_block(position.x.floor() as i32, position.z.floor() as i32);
         if self.center != Some(center) {
             self.recenter(commands, center);
         }
-        self.collect_reads();
+        self.sync_edits(commands, edits);
+        self.collect_reads(edits);
         self.schedule_reads();
         self.collect_meshes(commands, assets, material, layer);
         self.schedule_meshes(center);
@@ -143,6 +179,10 @@ impl Stream {
             .retain(|pos, _| pos.distance(center) <= LOAD_RADIUS);
         self.loaded
             .retain(|pos, _| pos.distance(center) <= LOAD_RADIUS);
+        self.overlaid
+            .retain(|pos, _| pos.distance(center) <= LOAD_RADIUS);
+        self.remesh
+            .retain(|pos| pos.distance(center) <= VIEW_RADIUS);
         self.absent
             .retain(|pos| pos.distance(center) <= LOAD_RADIUS);
         self.errors
@@ -160,13 +200,18 @@ impl Stream {
         });
     }
 
-    fn collect_reads(&mut self) {
+    fn collect_reads(&mut self, edits: &EditSession) {
         self.reads.retain(|&pos, task| {
             let Some(result) = check_ready(task) else {
                 return true;
             };
             match result {
                 Ok(Some(chunk)) => {
+                    if let Some(patch) = edits.patch_for(pos) {
+                        let mut visible = chunk.clone();
+                        visible.apply_patch(&patch);
+                        self.overlaid.insert(pos, Arc::new(visible));
+                    }
                     self.loaded.insert(pos, Arc::new(chunk));
                 }
                 Ok(None) => {
@@ -216,7 +261,10 @@ impl Stream {
             let entity = mesh.map(|mesh| {
                 spawn_terrain(commands, assets.add(mesh), material, pos, layer, self.root)
             });
-            self.rendered.insert(pos, entity);
+            if let Some(Some(old)) = self.rendered.insert(pos, entity) {
+                commands.entity(old).try_despawn();
+            }
+            self.remesh.remove(&pos);
             false
         });
     }
@@ -227,12 +275,12 @@ impl Stream {
                 break;
             }
             if pos.distance(center) > VIEW_RADIUS
-                || self.rendered.contains_key(&pos)
+                || (self.rendered.contains_key(&pos) && !self.remesh.contains(&pos))
                 || self.meshes.contains_key(&pos)
             {
                 continue;
             }
-            let Some(chunk) = self.loaded.get(&pos).cloned() else {
+            let Some(chunk) = self.visible_chunk(pos).cloned() else {
                 continue;
             };
             let neighbors = pos.neighbors();
@@ -242,13 +290,28 @@ impl Stream {
             {
                 continue;
             }
-            let neighbors = neighbors.map(|neighbor| self.loaded.get(&neighbor).cloned());
+            let neighbors = neighbors.map(|neighbor| self.visible_chunk(neighbor).cloned());
             self.meshes.insert(
                 pos,
                 AsyncComputeTaskPool::get().spawn(async move {
                     mesh_chunk(&chunk, std::array::from_fn(|i| neighbors[i].as_deref()))
                 }),
             );
+        }
+    }
+
+    fn clear_preview(&mut self, commands: &mut Commands) {
+        if let Some(active) = self.preview.take() {
+            for (pos, result) in active.results {
+                if let MaskResult::Replacement(entity) = result {
+                    if let Some(entity) = entity {
+                        commands.entity(entity).try_despawn();
+                    }
+                    if let Some(Some(base)) = self.rendered.get(&pos) {
+                        commands.entity(*base).insert(Visibility::Inherited);
+                    }
+                }
+            }
         }
     }
 
@@ -263,17 +326,8 @@ impl Stream {
         let changed = self.preview.as_ref().is_some_and(|active| {
             !placement.is_some_and(|placement| active.placement.same_mask(placement))
         });
-        if changed && let Some(active) = self.preview.take() {
-            for (pos, result) in active.results {
-                if let MaskResult::Replacement(entity) = result {
-                    if let Some(entity) = entity {
-                        commands.entity(entity).try_despawn();
-                    }
-                    if let Some(Some(base)) = self.rendered.get(&pos) {
-                        commands.entity(*base).insert(Visibility::Inherited);
-                    }
-                }
-            }
+        if changed {
+            self.clear_preview(commands);
         }
         let Some(placement) = placement else {
             return;
@@ -319,18 +373,27 @@ impl Stream {
                 break;
             }
             if !self.rendered.contains_key(&pos)
+                || self.remesh.contains(&pos)
                 || active.results.contains_key(&pos)
                 || active.jobs.contains_key(&pos)
                 || !preview_mask::affects_mesh(placement, pos)
             {
                 continue;
             }
-            let Some(chunk) = self.loaded.get(&pos).cloned() else {
+            let Some(chunk) = self
+                .overlaid
+                .get(&pos)
+                .or_else(|| self.loaded.get(&pos))
+                .cloned()
+            else {
                 continue;
             };
-            let neighbors = pos
-                .neighbors()
-                .map(|neighbor| self.loaded.get(&neighbor).cloned());
+            let neighbors = pos.neighbors().map(|neighbor| {
+                self.overlaid
+                    .get(&neighbor)
+                    .or_else(|| self.loaded.get(&neighbor))
+                    .cloned()
+            });
             let placement = placement.clone();
             active.jobs.insert(
                 pos,

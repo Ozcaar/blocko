@@ -7,7 +7,10 @@ use bevy::{
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
 
-use crate::world::{BlockState, Chunk, Section};
+use crate::{
+    palette,
+    world::{BlockState, Chunk, Section},
+};
 
 const FIRST_SECTION: i32 = -4;
 const SECTION_COUNT: usize = 24;
@@ -477,7 +480,10 @@ fn block_visual(state: &BlockState) -> Visual {
             } else if let Some(color) = dye(name) {
                 cube(Grain, color)
             } else {
-                cube(Rock, [151, 147, 157])
+                cube(
+                    Rock,
+                    palette::block_color(&state.name).unwrap_or([151, 147, 157]),
+                )
             }
         }
     };

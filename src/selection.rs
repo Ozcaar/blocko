@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 
-use crate::{editor::View, streaming::Stream, structure::Volume, world::ChunkPos};
+use crate::{
+    actions::EditorContext, editor::View, streaming::Stream, structure::Volume, world::ChunkPos,
+};
 
 const PICK_DISTANCE: f64 = 80.0;
 
@@ -56,7 +58,7 @@ fn trace_terrain(stream: &Stream, origin: Vec3, direction: Vec3, reach: f64) -> 
     })
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Hit {
     pub position: [i32; 3],
     face: [i32; 3],
@@ -178,7 +180,10 @@ pub fn draw(
         .0
         .retain(|document, _| views.get(*document).is_ok());
     for (document, view) in &views {
-        let corners = if view.stream.is_some() && view.selecting && view.preview.is_none() {
+        let corners = if view.stream.is_some()
+            && view.tool == EditorContext::Select
+            && view.preview.is_none()
+        {
             view.selection.corners
         } else {
             [None; 2]

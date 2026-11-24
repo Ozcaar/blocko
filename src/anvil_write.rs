@@ -128,7 +128,7 @@ impl RegionImage {
         let required = record.len().div_ceil(SECTOR_SIZE);
         ensure!(
             required <= MAX_CHUNK_SECTORS,
-            "El chunk ({}, {}) requeriría un archivo externo .mcc después del pegado",
+            "El chunk ({}, {}) requeriría un archivo externo .mcc después de la edición",
             pos.x,
             pos.z
         );

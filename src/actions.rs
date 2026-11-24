@@ -7,6 +7,14 @@ use bevy_egui::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
     Copy,
+    Save,
+    Undo,
+    Redo,
+    OpenPalette,
+    ToggleCameraCapture,
+    PinInspection,
+    PaintBlock,
+    EraseBlock,
     StartPaste,
     Place,
     RepeatPlace,
@@ -28,6 +36,9 @@ pub enum Action {
 pub enum EditorContext {
     Explore,
     Select,
+    Inspect,
+    Paint,
+    Erase,
     Place,
 }
 
@@ -38,6 +49,10 @@ impl Action {
             Copy | StartPaste => context != EditorContext::Place,
             Place | RepeatPlace | CancelPaste => context == EditorContext::Place,
             MarkCorner | CancelSelection => context == EditorContext::Select,
+            PinInspection => context == EditorContext::Inspect,
+            PaintBlock => context == EditorContext::Paint,
+            EraseBlock => context == EditorContext::Erase,
+            Save | Undo | Redo | OpenPalette | ToggleCameraCapture => true,
             CameraLook | CameraForward | CameraBackward | CameraLeft | CameraRight | CameraUp
             | CameraDown | CameraBoost | CameraRelease => true,
         }
@@ -159,6 +174,15 @@ impl Default for Bindings {
         let shift = Modifiers::SHIFT;
 
         Self(vec![
+            (Save, Trigger::Key(ctrl, Key::S)),
+            (Undo, Trigger::Key(ctrl, Key::Z)),
+            (Redo, Trigger::Key(ctrl, Key::Y)),
+            (Redo, Trigger::Key(ctrl | shift, Key::Z)),
+            (OpenPalette, Trigger::Key(ctrl, Key::P)),
+            (ToggleCameraCapture, Trigger::Key(plain, Key::F)),
+            (PinInspection, Click(plain, MouseButton::Left)),
+            (PaintBlock, Click(plain, MouseButton::Left)),
+            (EraseBlock, Click(plain, MouseButton::Left)),
             (Copy, Trigger::Key(ctrl, Key::C)),
             (StartPaste, Trigger::Key(ctrl, Key::V)),
             (Place, Click(plain, MouseButton::Left)),
@@ -176,7 +200,7 @@ impl Default for Bindings {
             (CameraDown, HeldKey(KeyCode::ControlLeft)),
             (CameraBoost, HeldKey(KeyCode::ShiftLeft)),
             (CameraBoost, HeldKey(KeyCode::ShiftRight)),
-            (CameraRelease, HeldKey(KeyCode::Escape)),
+            (CameraRelease, Trigger::Key(plain, Key::Escape)),
         ])
     }
 }
@@ -192,9 +216,20 @@ impl Bindings {
         action.allowed_in(context) && self.triggers(action).next().is_some()
     }
 
+    #[cfg(test)]
     pub fn match_event(&self, context: EditorContext, event: &Event) -> Option<Action> {
+        self.match_enabled(context, event, |_| true)
+    }
+
+    pub fn match_enabled(
+        &self,
+        context: EditorContext,
+        event: &Event,
+        enabled: impl Fn(Action) -> bool,
+    ) -> Option<Action> {
         self.0.iter().find_map(|&(action, trigger)| {
-            (action.allowed_in(context) && trigger.matches(event)).then_some(action)
+            (action.allowed_in(context) && trigger.matches(event) && enabled(action))
+                .then_some(action)
         })
     }
 
@@ -291,6 +326,17 @@ mod tests {
         assert_eq!(
             bindings.match_event(EditorContext::Place, &click(Modifiers::SHIFT, false)),
             None
+        );
+    }
+
+    #[test]
+    fn escape_falls_through_to_the_camera_when_selection_has_nothing_to_cancel() {
+        let bindings = Bindings::default();
+        let event = key(Key::Escape, Modifiers::NONE, false);
+        assert_eq!(
+            bindings.match_enabled(EditorContext::Select, &event, |action| action
+                == Action::CameraRelease),
+            Some(Action::CameraRelease)
         );
     }
 

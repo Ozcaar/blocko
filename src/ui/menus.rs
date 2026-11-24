@@ -76,6 +76,18 @@ pub(super) fn bar(
                     })
                     .ui(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 1.0;
+                        let editor = &mut actions.editor;
+                        let mut command = |ui: &mut egui::Ui, label, action| {
+                            let binding = binding_label(bindings, action, lang, false);
+                            if entry(
+                                ui,
+                                lang.text(label),
+                                &binding,
+                                !busy && action_enabled(action, view, clipboard, captured),
+                            ) {
+                                *editor = Some((action, None));
+                            }
+                        };
                         ui.menu_button(lang.text(Text::FileMenu), |ui| {
                             menu_width(ui, 240.0);
                             for (label, destination, available) in [
@@ -88,12 +100,16 @@ pub(super) fn bar(
                                 }
                             }
                             ui.separator();
+                            command(ui, Text::SaveWorld, Action::Save);
                             if entry(ui, lang.text(Text::CloseTab), "", !busy && world_open) {
                                 actions.tab = Some((document, TabAction::Close));
                             }
                         });
                         ui.menu_button(lang.text(Text::EditMenu), |ui| {
                             menu_width(ui, 235.0);
+                            command(ui, Text::UndoEdit, Action::Undo);
+                            command(ui, Text::RedoEdit, Action::Redo);
+                            ui.separator();
                             let cancel = if tools_context(view) == EditorContext::Place {
                                 Action::CancelPaste
                             } else {
@@ -104,15 +120,29 @@ pub(super) fn bar(
                                 (Text::PasteStructure, Action::StartPaste),
                                 (Text::CancelOperation, cancel),
                             ] {
-                                let binding = binding_label(bindings, action, lang, false);
-                                if entry(
-                                    ui,
-                                    lang.text(label),
-                                    &binding,
-                                    !busy && action_enabled(action, view, clipboard, captured),
-                                ) {
-                                    actions.editor = Some((action, None));
+                                command(ui, label, action);
+                            }
+                            ui.separator();
+                            command(ui, Text::BlockPalette, Action::OpenPalette);
+                            let tools_enabled = !busy && world_open && !view.paste.locks_preview();
+                            for (label, tool) in [
+                                (Text::InspectBlock, EditorContext::Inspect),
+                                (Text::PaintBlock, EditorContext::Paint),
+                                (Text::EraseBlock, EditorContext::Erase),
+                            ] {
+                                if entry(ui, lang.text(label), "", tools_enabled) {
+                                    actions.tool = Some(tool);
                                 }
+                            }
+                            let region_enabled = tools_enabled
+                                && tools_context(view) == EditorContext::Select
+                                && view
+                                    .selection
+                                    .volume()
+                                    .is_some_and(|volume| volume.validate().is_ok());
+                            if entry(ui, lang.text(Text::RegionEdit), "", region_enabled) {
+                                chrome.inspector = true;
+                                actions.region_menu = true;
                             }
                             ui.separator();
                             if entry(ui, lang.text(Text::Preferences), "", true) {
@@ -139,6 +169,8 @@ pub(super) fn bar(
                             {
                                 ui.close();
                             }
+                            ui.separator();
+                            command(ui, Text::CameraCapture, Action::ToggleCameraCapture);
                         });
                         ui.menu_button(lang.text(Text::HelpMenu), |ui| {
                             menu_width(ui, 190.0);

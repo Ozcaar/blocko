@@ -1,6 +1,6 @@
 # Blocko
 
-Editor de escritorio para explorar el Overworld y copiar construcciones entre mundos locales de Minecraft Java Edition 1.21.1 en Windows.
+Editor de escritorio para explorar y editar el Overworld de mundos locales de Minecraft Java Edition 1.21.1 en Windows.
 
 ## Ejecutar en Windows
 
@@ -21,26 +21,26 @@ cargo run --release --locked -- "C:\Mundos de prueba\Bosque"
 
 Si Cargo muestra `link.exe not found`, instala **Desarrollo para el escritorio con C++** en Visual Studio 2022, con MSVC y un SDK de Windows. Ejecuta el comando desde **x64 Native Tools Command Prompt for VS 2022**. [Requisitos de Rust para Windows](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup)
 
-## Comprobar v0.2.0 en Windows
+## Comprobar v0.3.0 en Windows
 
-Cierra Minecraft y usa copias de Bosque y Pradera guardadas en Java 1.21.1. Conserva los respaldos mientras compruebas las escrituras.
+Cierra Minecraft y abre copias de Bosque y Pradera guardadas en Java 1.21.1. Para comparar el estado anterior al guardado en Minecraft, usa una copia adicional. Blocko mantiene un bloqueo sobre el mundo abierto.
 
-1. **Visor y pestañas.** Abre Bosque con **Abrir mundo** y usa **+** en la fila de pestañas para abrir Pradera. Cambia de pestaña después de mover la cámara o marcar una esquina en cada mundo. Ambos deben conservar su posición y selección. Arrastra la pestaña Pradera más allá del borde de la ventana y suelta. Pradera debe aparecer en su propia ventana y Bosque debe seguir abierto. Prueba cerrar una pestaña, cerrar una ventana y volver a abrir un mundo. El menú **Archivo** permite reemplazar el mundo de la pestaña activa, cerrarla y abrir directamente en otra ventana. Intenta volver a abrir una carpeta que ya tenga una pestaña.
-2. **Cámara y selección.** Mantén pulsado el botón derecho sobre el terreno para mirar. La última fila reserva espacio para los comandos contextuales y muestra los controles de vuelo durante la captura del cursor. En la barra izquierda, elige **Selección 3D**. En el inspector, pulsa **Marcar A/B** y selecciona dos bloques. Comprueba el contorno, las marcas y las dimensiones inclusivas. Ajusta X, Y o Z y copia con **Editar → Copiar selección** o **Ctrl+C**. En un campo de coordenadas con texto seleccionado, Ctrl+C debe copiar el texto a Windows y conservar la construcción compartida. Abre **Portapapeles compartido** en ambas ventanas para comparar el origen y las dimensiones.
-3. **Previsualización y cancelación.** En Pradera, elige **Editar → Pegar construcción** o pulsa **Ctrl+V**. Mueve el cursor por caras del terreno y revisa la esquina mínima mostrada en el inspector. Elige **Coordenadas** o edita X, Y y Z para una colocación precisa. Prueba **Con aire** y **Sin aire**. Gira la cámara con el botón derecho y comprueba que la previsualización sigue activa. Cancela desde **Editar → Cancelar operación** y repite con **Esc** y **Retroceso**. La copia debe seguir disponible y los hashes del mundo deben coincidir. En un campo de texto y en el diálogo de apertura, comprueba que las teclas se aplican al control que tiene el foco.
-4. **Guardar una vez y repetir.** Apunta a un lugar válido de una copia de Pradera. Mantén pulsado el botón izquierdo y comprueba que se guarda una sola copia. Vuelve a iniciar la vista previa y coloca tres copias en lugares distintos con **Mayús + clic izquierdo**. Termina con un clic sin modificadores. Revisa un respaldo por operación y la ubicación de los bloques en el destino. Repite con varias pestañas y dos ventanas. Para revisar el destino y las regiones antes de guardar, usa **Preparar** y **Confirmar pegado**.
-5. **Datos de Minecraft.** Copia un volumen con una escalera orientada, un cofre simple con objetos y un cartel escrito por ambos lados. Pruébalo en dos copias de destino, una con cada modo de aire. Cierra el destino en Blocko y ábrelo en Minecraft Java 1.21.1. Comprueba la orientación, el inventario, ambas caras del cartel y los huecos.
-6. **Estados e idioma.** Prueba una carpeta incompatible, un mundo en uso por Minecraft y un destino inválido. Verifica el nombre del mundo, el mensaje y los detalles disponibles. Cambia a **English** desde **Editar → Preferencias** con dos ventanas abiertas, reduce el ancho y cambia de pestaña. Usa **Ver** para ocultar o recuperar las herramientas y el inspector. Consulta las combinaciones activas en **Ayuda → Controles y atajos**. Revisa menús, estados, inspector y controles de la barra inferior en ambos idiomas. Los nombres de mundo, los datos del portapapeles y la edición activa deben conservarse.
-7. **Terreno.** Compara el mismo punto y orientación en Bosque y en Pradera con las capturas del MVP. Comprueba nieve, vegetación, elevaciones y carga progresiva en ambos mundos. En una zona con agua y hielo, revisa sus límites con el terreno a corta y media distancia. Haz la misma pasada con dos ventanas y compara la fluidez y el consumo con el Administrador de tareas.
+1. **Pestañas y foco.** Abre ambos mundos desde **Archivo**. Cambia de pestaña y separa Pradera arrastrándola fuera. Comprueba que se conservan la cámara, la selección y el portapapeles compartido. El botón derecho mira de forma temporal y **F** alterna la captura persistente. La retícula se centra en el visor. **Ctrl+P**, los menús y el cambio de foco liberan el cursor. Con una previsualización activa, **Esc** cancela primero la colocación.
+2. **Inspección, paleta y edición.** Elige **Inspeccionar bloque**, apunta a un bloque y haz clic para fijarlo. Comprueba el ID, la orientación y los detalles de un cofre o cartel. Pulsa **Ctrl+P**, busca «roble» o `minecraft:oak_planks` y elige con flechas y **Enter**. Coloca el material adyacente a la cara apuntada y borra un bloque con las herramientas de la izquierda. Comprueba los cambios en el visor y el asterisco de la pestaña.
+3. **Rellenar y reemplazar.** Marca dos esquinas con **Selección 3D** y revisa sus coordenadas. En **Editar selección**, elige un material. Usa **Rellenar** o indica el ID de origen para **Reemplazar**. Revisa dimensiones y conteo antes de aplicar. **Ctrl+Z** debe revertir toda la operación y **Ctrl+Y** rehacerla.
+4. **Pegado de construcciones.** Copia un volumen de Bosque con una escalera orientada, un cofre y un cartel con texto en ambas caras. En Pradera, **Ctrl+V** activa la previsualización. Prueba destino bajo el cursor y coordenadas precisas, con y sin aire. Cancela con **Esc** o **Retroceso**, luego coloca varias copias con **Mayús + clic izquierdo** y termina con un clic sin modificadores. Cada pulsación crea una operación pendiente.
+5. **Guardar y revertir.** Modifica ambos mundos y compara los hashes de sus regiones. Guarda solo Pradera con **Archivo → Guardar** o **Ctrl+S**. Pradera debe perder el asterisco y tener un respaldo. Bosque debe seguir pendiente, con sus regiones intactas. Deshaz el último cambio de Pradera, verifica que vuelve el asterisco y guarda otra vez. Cierra Pradera en Blocko y abre la copia en Minecraft. Comprueba la reversión, la orientación, el inventario y las dos caras del cartel.
+6. **Cerrar con cambios e idioma.** Prueba cerrar una pestaña, cerrar una ventana y reemplazar un mundo modificado. **Cancelar** conserva la edición, **Descartar** cierra sin escribir y **Guardar** debe finalizar correctamente antes de cerrar. Comprueba que Ctrl+C y Ctrl+Z actúan sobre el texto al editar un campo. Repite los menús y la ayuda contextual en inglés desde **Editar → Preferencias**.
 
-### Verificar que cancelar conserva los archivos
+### Comparar los archivos antes de guardar
 
-Toma un inventario de archivos antes de explorar, copiar, previsualizar y cancelar. Cierra Blocko antes de comparar.
+En PowerShell, indica las dos copias abiertas y registra el estado antes de editar. Repite la comparación tras aplicar cambios en Blocko y antes de pulsar Guardar.
 
 ```powershell
 $copias = @('C:\Mundos de prueba\Bosque', 'C:\Mundos de prueba\Pradera')
 function Get-InventarioBlocko {
     Get-ChildItem -LiteralPath $copias -Recurse -File -Force |
+        Where-Object { $_.Name -ne 'session.lock' } |
         Get-FileHash -Algorithm SHA256 |
         Sort-Object Path |
         ForEach-Object { '{0}  {1}' -f $_.Hash, $_.Path }
@@ -71,9 +71,9 @@ Las pruebas ignoradas buscan **Bosque** y **Pradera** bajo `BLOCKO_TEST_WORLDS`.
 
 ## Guardado y recuperación
 
-Blocko verifica las huellas de los archivos al abrir, preparar y confirmar, y toma el bloqueo exclusivo de `session.lock` al guardar. Guarda los originales de las regiones afectadas en `blocko-backups/pegado-…`, dentro de la copia de destino. Si se interrumpe una escritura, vuelve a abrir esa copia en Blocko antes de cargarla en Minecraft. Si un cambio externo impide la recuperación, la aplicación indica dónde encontrar el respaldo.
+Blocko registra las huellas de los archivos al abrir, las comprueba al guardar y toma el bloqueo exclusivo de `session.lock` para la escritura. Guarda los originales de las regiones afectadas en `blocko-backups/pegado-…`, dentro de la copia de destino. Si se interrumpe una escritura, vuelve a abrir esa copia en Blocko antes de cargarla en Minecraft. Si un cambio externo impide la recuperación, la aplicación indica dónde encontrar el respaldo.
 
-El guardado requiere chunks completos de Java 1.21.1 y admite hasta 256 MiB de regiones preparadas por operación. Blocko rechaza cambios que afectarían datos incompatibles, como entidades de bloque fuera del alcance, puntos de interés y chunks externos. La copia admite hasta 1 048 576 bloques.
+El guardado requiere chunks completos de Java 1.21.1 y admite hasta 256 MiB de regiones preparadas por operación. Blocko rechaza cambios que afectarían datos incompatibles, como entidades de bloque fuera del alcance, puntos de interés y chunks externos. Cada copia o edición admite hasta 1 048 576 bloques. Cada documento conserva hasta 64 operaciones de historial o 1 048 576 cambios de bloque mientras está abierto. Puedes deshacer después de guardar y volver a guardar la reversión.
 
 ## Traducciones y controles
 

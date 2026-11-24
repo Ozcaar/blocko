@@ -12,7 +12,7 @@ use bevy::{
 use crate::{
     editor::View,
     java::JavaWorld,
-    world::{BlockEntity, BlockEntityRecord, BlockState, Chunk, ChunkPos},
+    world::{BlockEntity, BlockEntityRecord, BlockPatch, BlockState, Chunk, ChunkPos},
 };
 
 pub const MIN_HORIZONTAL: i32 = -29_999_984;
@@ -57,7 +57,7 @@ impl Volume {
             .product::<u64>();
         ensure!(
             blocks <= MAX_BLOCKS,
-            "La selección contiene {blocks} bloques y el límite por copia es de {MAX_BLOCKS}"
+            "La selección contiene {blocks} bloques y el límite de la operación es de {MAX_BLOCKS}"
         );
         Ok(())
     }
@@ -225,6 +225,7 @@ impl Clipboard {
         document: Entity,
         source: Arc<JavaWorld>,
         volume: Volume,
+        patch: BlockPatch,
     ) -> Result<()> {
         ensure!(!self.copying(), "Hay una copia en curso");
         volume.validate()?;
@@ -232,7 +233,13 @@ impl Clipboard {
             document,
             task: IoTaskPool::get().spawn(async move {
                 Structure::capture(source.name.clone(), volume, |pos| {
-                    source.load_chunk_for_copy(pos)
+                    let mut chunk = source.load_chunk_for_copy(pos)?;
+                    if let Some(chunk) = &mut chunk
+                        && let Some(changes) = patch.get(&pos)
+                    {
+                        chunk.apply_patch(changes);
+                    }
+                    Ok(chunk)
                 })
             }),
         });

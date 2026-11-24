@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ChunkPos {
@@ -84,19 +84,28 @@ pub enum BlockEntity {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockValue {
+    pub state: BlockState,
+    pub entity: Option<BlockEntity>,
+}
+
+pub type ChunkPatch = BTreeMap<[i32; 3], Arc<BlockValue>>;
+pub type BlockPatch = BTreeMap<ChunkPos, ChunkPatch>;
+
+#[derive(Clone, Debug)]
 pub enum BlockEntityRecord {
     Supported(BlockEntity),
     Unsupported { kind: String, reason: String },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Section {
     pub palette: Vec<BlockState>,
     pub blocks: Box<[u16; 4096]>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Chunk {
     pub sections: BTreeMap<i32, Section>,
     pub block_entities: BTreeMap<[i32; 3], BlockEntityRecord>,
@@ -104,6 +113,43 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    pub fn apply_patch(&mut self, patch: &ChunkPatch) {
+        use std::collections::HashMap;
+
+        let mut indices = HashMap::new();
+        for (&[x, y, z], value) in patch {
+            let sy = y.div_euclid(16);
+            let Some(section) = self.sections.get_mut(&sy) else {
+                continue;
+            };
+            let palette = indices.entry(sy).or_insert_with(|| {
+                section
+                    .palette
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(index, state)| (state, index as u16))
+                    .collect::<HashMap<_, _>>()
+            });
+            let index = if let Some(&index) = palette.get(&value.state) {
+                index
+            } else {
+                let index = section.palette.len() as u16;
+                palette.insert(value.state.clone(), index);
+                section.palette.push(value.state.clone());
+                index
+            };
+            let cell = (y.rem_euclid(16) * 256 + z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize;
+            section.blocks[cell] = index;
+            if let Some(entity) = &value.entity {
+                self.block_entities
+                    .insert([x, y, z], BlockEntityRecord::Supported(entity.clone()));
+            } else {
+                self.block_entities.remove(&[x, y, z]);
+            }
+        }
+    }
+
     pub fn block(&self, x: i32, y: i32, z: i32) -> Option<&BlockState> {
         if !(0..16).contains(&x) || !(0..16).contains(&z) {
             return None;

@@ -133,6 +133,7 @@ fn controls(ui: &mut Ui, lang: Language, bindings: &Bindings) {
             ),
             (Text::CameraHeight, &[CameraUp, CameraDown]),
             (Text::CameraBoost, &[CameraBoost]),
+            (Text::CameraCapture, &[ToggleCameraCapture]),
             (Text::CameraRelease, &[CameraRelease]),
         ],
     );
@@ -143,6 +144,12 @@ fn controls(ui: &mut Ui, lang: Language, bindings: &Bindings) {
         bindings,
         ControlsEditing,
         &[
+            (Text::SaveWorld, &[Save]),
+            (Text::UndoEdit, &[Undo]),
+            (Text::RedoEdit, &[Redo]),
+            (Text::BlockPalette, &[OpenPalette]),
+            (Text::PaintBlock, &[PaintBlock]),
+            (Text::EraseBlock, &[EraseBlock]),
             (ActionMark, &[MarkCorner]),
             (CancelMark, &[CancelSelection]),
             (CopySelection, &[Copy]),

@@ -123,6 +123,8 @@ pub(super) enum Icon {
     Target,
     Pin,
     Trash,
+    Inspect,
+    Erase,
     Layers,
 }
 
@@ -193,6 +195,22 @@ impl Icon {
                 outline(p(5., 1.5), p(11., 5.), 1.0_f32);
                 path(&[[6., 8.], [10., 8.]]);
                 path(&[[6., 11.], [10., 11.]]);
+            }
+            Self::Inspect => {
+                painter.circle_stroke(p(6.5, 6.5), rect.width() * 0.27, stroke);
+                path(&[[10., 10.], [14.5, 14.5]]);
+            }
+            Self::Erase => {
+                path(&[
+                    [2., 10.],
+                    [9.5, 2.5],
+                    [14.5, 7.5],
+                    [8., 14.],
+                    [6., 14.],
+                    [2., 10.],
+                ]);
+                path(&[[6., 6.], [11., 11.]]);
+                path(&[[8., 14.], [15., 14.]]);
             }
             Self::Target => {
                 painter.circle_stroke(p(8., 8.), rect.width() * 0.30, stroke);

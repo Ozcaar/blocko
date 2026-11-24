@@ -4,15 +4,16 @@ use anyhow::{Context, Result, bail, ensure};
 use fastnbt::{LongArray, Value};
 
 use crate::{
-    java::decode_chunk,
-    placement::Placement,
-    structure::MIN_Y,
-    world::{BlockEntity, BlockEntityRecord, BlockState, Chunk, ChunkPos, Section, SignText},
+    java::{JAVA_1_21_1, decode_chunk},
+    structure::{MAX_HORIZONTAL, MAX_Y, MIN_HORIZONTAL, MIN_Y},
+    world::{
+        BlockEntity, BlockEntityRecord, BlockState, BlockValue, Chunk, ChunkPatch, ChunkPos,
+        Section, SignText,
+    },
 };
 
 type Compound = HashMap<String, Value>;
 
-const DATA_VERSION: i32 = 3955;
 const SECTION_COUNT: usize = 24;
 
 struct Change<'a> {
@@ -23,27 +24,19 @@ struct Change<'a> {
     entity_changed: bool,
 }
 
-pub fn edit_chunk(nbt: &[u8], pos: ChunkPos, placement: &Placement) -> Result<Option<Vec<u8>>> {
-    let [x0, z0] = [
-        pos.x
-            .checked_mul(16)
-            .context("Coordenada de chunk X inválida")?,
-        pos.z
-            .checked_mul(16)
-            .context("Coordenada de chunk Z inválida")?,
-    ];
-    let volume = placement.volume();
-    let x_range = volume.min[0].max(x0)..=volume.max[0].min(x0 + 15);
-    let z_range = volume.min[2].max(z0)..=volume.max[2].min(z0 + 15);
-    if x_range.is_empty() || z_range.is_empty() {
+pub(crate) fn edit_chunk_patch(
+    nbt: &[u8],
+    pos: ChunkPos,
+    patch: &ChunkPatch,
+) -> Result<Option<(Vec<u8>, usize)>> {
+    if patch.is_empty() {
         return Ok(None);
     }
-
     let Value::Compound(mut root) = fastnbt::from_bytes(nbt)? else {
         bail!("El NBT de destino no es un compuesto");
     };
     ensure!(
-        root.get("DataVersion") == Some(&Value::Int(DATA_VERSION)),
+        root.get("DataVersion") == Some(&Value::Int(JAVA_1_21_1)),
         "El chunk de destino debe estar guardado en Minecraft Java 1.21.1"
     );
     ensure!(
@@ -54,16 +47,13 @@ pub fn edit_chunk(nbt: &[u8], pos: ChunkPos, placement: &Placement) -> Result<Op
         decode_chunk(nbt, pos)?.context("El chunk de destino no está completamente generado")?;
 
     let mut changes = Vec::new();
-    for y in volume.min[1]..=volume.max[1] {
-        for z in z_range.clone() {
-            for x in x_range.clone() {
-                let coordinate = [x, y, z];
-                if let Some(state) = placement.writes_block(coordinate)
-                    && let Some(change) = find_change(placement, &original, coordinate, state)?
-                {
-                    changes.push(change);
-                }
-            }
+    for (&coordinate @ [x, _, z], expected) in patch {
+        ensure!(
+            ChunkPos::from_block(x, z) == pos,
+            "La posición {coordinate:?} no pertenece al chunk de destino"
+        );
+        if let Some(change) = find_change(&original, coordinate, expected)? {
+            changes.push(change);
         }
     }
     if changes.is_empty() {
@@ -73,7 +63,7 @@ pub fn edit_chunk(nbt: &[u8], pos: ChunkPos, placement: &Placement) -> Result<Op
         .iter()
         .map(|change| change.coordinate)
         .collect::<HashSet<_>>();
-    check_pending_updates(&root, [x0, z0], &changed_positions)?;
+    check_pending_updates(&root, [pos.x * 16, pos.z * 16], &changed_positions)?;
 
     if changes.iter().any(|change| change.block_changed) {
         edit_sections(&mut root, &original, &changes)?;
@@ -85,16 +75,30 @@ pub fn edit_chunk(nbt: &[u8], pos: ChunkPos, placement: &Placement) -> Result<Op
     let bytes = fastnbt::to_bytes(&root)?;
     let verified = decode_chunk(&bytes, pos)?.context("El chunk editado dejó de estar completo")?;
     verify_changes(&verified, &changes)?;
-    Ok(Some(bytes))
+    Ok(Some((bytes, changes.len())))
+}
+
+pub(crate) fn validate_cell_change(
+    chunk: &Chunk,
+    coordinate: [i32; 3],
+    expected: &BlockValue,
+) -> Result<bool> {
+    Ok(find_change(chunk, coordinate, expected)?.is_some())
 }
 
 fn find_change<'a>(
-    placement: &'a Placement,
     chunk: &Chunk,
     coordinate: [i32; 3],
-    expected_block: &'a BlockState,
+    expected: &'a BlockValue,
 ) -> Result<Option<Change<'a>>> {
+    let expected_block = &expected.state;
+    let expected_entity = expected.entity.as_ref();
     let [x, y, z] = coordinate;
+    let horizontal = MIN_HORIZONTAL..=MAX_HORIZONTAL;
+    ensure!(
+        horizontal.contains(&x) && horizontal.contains(&z) && (MIN_Y..=MAX_Y).contains(&y),
+        "La posición ({x}, {y}, {z}) está fuera de los límites del Overworld"
+    );
     if let Some(error) = &chunk.block_entity_error {
         bail!("Entidades de bloque de destino incompatibles: {error}");
     }
@@ -116,11 +120,17 @@ fn find_change<'a>(
         );
     }
 
-    let relative = std::array::from_fn(|axis| (coordinate[axis] - placement.origin()[axis]) as u32);
-    let expected_entity = placement.source.block_entity_at(relative);
     ensure!(
-        expected_entity.is_some() == entity_id(expected_block).is_some(),
-        "Faltan datos compatibles de la entidad de bloque que se intenta pegar en ({x}, {y}, {z})"
+        matches!(
+            (expected_entity, entity_id(expected_block)),
+            (None, None)
+                | (Some(BlockEntity::Chest { .. }), Some("minecraft:chest"))
+                | (
+                    Some(BlockEntity::Sign { .. }),
+                    Some("minecraft:sign" | "minecraft:hanging_sign")
+                )
+        ),
+        "La entidad de bloque no corresponde al estado solicitado en ({x}, {y}, {z})"
     );
     let old_entity = match chunk.block_entities.get(&coordinate) {
         Some(BlockEntityRecord::Supported(entity)) => Some(entity),
@@ -201,17 +211,24 @@ fn rewrite_block_states(
         .palette
         .iter()
         .enumerate()
+        .filter(|(index, _)| supported_palette_entry(&palette[*index]))
         .map(|(index, state)| (state, index))
         .collect::<HashMap<_, _>>();
     let mut indices = original.blocks.clone();
     for edit in edits {
+        let [x, y, z] = edit.coordinate.map(|axis| axis.rem_euclid(16) as usize);
+        let block = &mut indices[y * 256 + z * 16 + x];
+        ensure!(
+            supported_palette_entry(&palette[usize::from(*block)]),
+            "El bloque en {:?} tiene etiquetas de paleta incompatibles",
+            edit.coordinate
+        );
         let id = *by_state.entry(edit.expected_block).or_insert_with(|| {
             let id = palette.len();
             palette.push(block_state_nbt(edit.expected_block));
             id
         });
-        let [x, y, z] = edit.coordinate.map(|axis| axis.rem_euclid(16) as usize);
-        indices[y * 256 + z * 16 + x] = u16::try_from(id)?;
+        *block = u16::try_from(id)?;
     }
     let mut used = vec![false; palette.len()];
     for &id in indices.iter() {
@@ -246,6 +263,11 @@ fn rewrite_block_states(
     }
     states.insert("palette".into(), Value::List(compact));
     Ok(())
+}
+
+fn supported_palette_entry(value: &Value) -> bool {
+    matches!(value, Value::Compound(tags)
+        if tags.keys().all(|key| matches!(key.as_str(), "Name" | "Properties")))
 }
 
 fn block_state_nbt(state: &BlockState) -> Value {
@@ -442,7 +464,7 @@ fn check_pending_updates(
     Ok(())
 }
 
-fn is_point_of_interest(block: &BlockState) -> bool {
+pub(crate) fn is_point_of_interest(block: &BlockState) -> bool {
     let Some(name) = block.name.strip_prefix("minecraft:") else {
         return false;
     };
@@ -527,7 +549,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        placement::AirMode,
+        placement::{AirMode, Placement},
         structure::{Structure, Volume},
         world::ChestItem,
     };
@@ -535,6 +557,33 @@ mod tests {
 
     const TARGET: ChunkPos = ChunkPos { x: -2, z: -3 };
     const ORIGIN: [i32; 3] = [-32, -49, -48];
+
+    fn edit_chunk(nbt: &[u8], pos: ChunkPos, placement: &Placement) -> Result<Option<Vec<u8>>> {
+        let volume = placement.volume();
+        let origin = placement.origin();
+        let x0 = pos.x * 16;
+        let z0 = pos.z * 16;
+        let mut patch = ChunkPatch::new();
+        for y in volume.min[1]..=volume.max[1] {
+            for z in volume.min[2].max(z0)..=volume.max[2].min(z0 + 15) {
+                for x in volume.min[0].max(x0)..=volume.max[0].min(x0 + 15) {
+                    let coordinate = [x, y, z];
+                    if let Some(state) = placement.writes_block(coordinate) {
+                        let relative =
+                            std::array::from_fn(|axis| (coordinate[axis] - origin[axis]) as u32);
+                        patch.insert(
+                            coordinate,
+                            Arc::new(BlockValue {
+                                state: state.clone(),
+                                entity: placement.source.block_entity_at(relative).cloned(),
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(edit_chunk_patch(nbt, pos, &patch)?.map(|(bytes, _)| bytes))
+    }
 
     fn state(name: &str, properties: &[(&str, &str)]) -> BlockState {
         BlockState {
@@ -596,7 +645,7 @@ mod tests {
             ("FutureSectionTag", text("preserved")),
         ]));
         compound([
-            ("DataVersion", Value::Int(DATA_VERSION)),
+            ("DataVersion", Value::Int(JAVA_1_21_1)),
             ("Status", text("minecraft:full")),
             ("xPos", Value::Int(TARGET.x)),
             ("yPos", Value::Int(-4)),
@@ -860,7 +909,7 @@ mod tests {
             ("id", text("minecraft:command_block")),
         ]));
         for (key, value, message) in [
-            ("DataVersion", Value::Int(DATA_VERSION - 1), "1.21.1"),
+            ("DataVersion", Value::Int(JAVA_1_21_1 - 1), "1.21.1"),
             ("Status", text("minecraft:light"), "generado"),
             ("sections", Value::List(vec![]), "biomas"),
             (
@@ -896,6 +945,46 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("punto de interés")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn applies_sparse_changes_without_touching_intervening_blocks_or_ticks() -> Result<()> {
+        let stone = state("stone", &[]);
+        let planks = state("oak_planks", &[]);
+        let [x, y, z] = ORIGIN;
+        let mut dst = destination(std::slice::from_ref(&stone), &[0; 4096]);
+        dst.insert(
+            "block_ticks".into(),
+            Value::List(vec![Value::Compound(compound([
+                ("x", Value::Int(x + 1)),
+                ("y", Value::Int(y)),
+                ("z", Value::Int(z)),
+            ]))]),
+        );
+        let value = Arc::new(BlockValue {
+            state: planks.clone(),
+            entity: None,
+        });
+        let mut patch = ChunkPatch::from([(ORIGIN, value.clone()), ([x + 2, y, z], value.clone())]);
+        let nbt = fastnbt::to_bytes(&dst)?;
+        let (output, count) = edit_chunk_patch(&nbt, TARGET, &patch)?.unwrap();
+        assert_eq!(count, 2);
+        let result: Compound = fastnbt::from_bytes(&output)?;
+        assert_eq!(result["block_ticks"], dst["block_ticks"]);
+        let chunk = decode_chunk(&output, TARGET)?.unwrap();
+        assert_eq!(chunk.block(0, y, 0), Some(&planks));
+        assert_eq!(chunk.block(1, y, 0), Some(&stone));
+        assert_eq!(chunk.block(2, y, 0), Some(&planks));
+        assert!(edit_chunk_patch(&output, TARGET, &patch)?.is_none());
+
+        patch.insert([x + 1, y, z], value);
+        assert!(
+            edit_chunk_patch(&nbt, TARGET, &patch)
+                .unwrap_err()
+                .to_string()
+                .contains("block_ticks")
         );
         Ok(())
     }
