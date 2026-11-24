@@ -7,6 +7,7 @@ mod flight;
 mod i18n;
 mod java;
 mod java_paste;
+mod manual_edit;
 #[cfg(windows)]
 mod native_clipboard;
 mod palette;

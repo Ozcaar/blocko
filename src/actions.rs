@@ -40,8 +40,7 @@ pub enum EditorContext {
     Explore,
     Select,
     Inspect,
-    Paint,
-    Erase,
+    Manual,
     Place,
 }
 
@@ -53,11 +52,11 @@ impl Action {
             Place | RepeatPlace | CancelPaste => context == EditorContext::Place,
             MarkCorner | CancelSelection => context == EditorContext::Select,
             PinInspection => context == EditorContext::Inspect,
-            PaintBlock => context == EditorContext::Paint,
-            EraseBlock => context == EditorContext::Erase,
+            PaintBlock | EraseBlock => context == EditorContext::Manual,
+            CameraLook => context != EditorContext::Manual,
             Save | Undo | Redo | OpenPalette | ToggleCameraCapture => true,
-            CameraLook | CameraForward | CameraBackward | CameraLeft | CameraRight | CameraUp
-            | CameraDown | CameraBoost | CameraRelease => true,
+            CameraForward | CameraBackward | CameraLeft | CameraRight | CameraUp | CameraDown
+            | CameraBoost | CameraRelease => true,
         }
     }
 }
@@ -180,7 +179,7 @@ impl Default for Bindings {
             (OpenPalette, Trigger::Key(ctrl, Key::P)),
             (ToggleCameraCapture, Trigger::Key(plain, Key::F)),
             (PinInspection, Click(plain, MouseButton::Left)),
-            (PaintBlock, Click(plain, MouseButton::Left)),
+            (PaintBlock, Click(plain, MouseButton::Right)),
             (EraseBlock, Click(plain, MouseButton::Left)),
             (Copy, Trigger::Key(ctrl, Key::C)),
             (StartPaste, Trigger::Key(ctrl, Key::V)),
@@ -407,6 +406,34 @@ mod tests {
         assert_eq!(
             bindings.match_event(context, &key(Key::K, Modifiers::CTRL, true)),
             None
+        );
+    }
+
+    #[test]
+    fn manual_edits_own_both_buttons_without_starting_temporary_look() {
+        let bindings = Bindings::default();
+        let right = Event::PointerButton {
+            pos: Pos2::ZERO,
+            pressed: true,
+            button: PointerButton::Secondary,
+            modifiers: Modifiers::NONE,
+        };
+        assert_eq!(
+            bindings.match_event(EditorContext::Manual, &right),
+            Some(Action::PaintBlock)
+        );
+        assert_eq!(
+            bindings.match_event(EditorContext::Manual, &click(Modifiers::NONE, true)),
+            Some(Action::EraseBlock)
+        );
+        assert_eq!(
+            bindings.camera_look_event(EditorContext::Manual, &right),
+            None
+        );
+        assert_eq!(bindings.match_event(EditorContext::Explore, &right), None);
+        assert_eq!(
+            bindings.camera_look_event(EditorContext::Explore, &right),
+            Some((true, Pos2::ZERO))
         );
     }
 

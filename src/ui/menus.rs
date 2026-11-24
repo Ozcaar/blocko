@@ -118,8 +118,7 @@ pub(super) fn bar(
                             let tools_enabled = !busy && world_open && !view.paste.locks_preview();
                             for (label, tool) in [
                                 (Text::InspectBlock, EditorContext::Inspect),
-                                (Text::PaintBlock, EditorContext::Paint),
-                                (Text::EraseBlock, EditorContext::Erase),
+                                (Text::ManualEdit, EditorContext::Manual),
                             ] {
                                 if entry(ui, lang.text(label), "", tools_enabled) {
                                     actions.tool = Some(tool);

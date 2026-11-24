@@ -76,6 +76,7 @@ catalog! {
     Explore => "Explorar", "Explore";
     Select => "Selección 3D", "3D selection";
     InspectBlock => "Inspeccionar bloque", "Inspect block";
+    ManualEdit => "Edición manual", "Manual editing";
     PaintBlock => "Colocar bloque", "Place block";
     EraseBlock => "Borrar bloque", "Erase block";
     Placement => "Colocación", "Placement";

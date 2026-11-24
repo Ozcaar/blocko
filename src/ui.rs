@@ -22,6 +22,7 @@ use crate::{
     },
     flight::Flight,
     i18n::{Language, Text},
+    manual_edit,
     palette::{self, Palette},
     paste::{self, EditIntent, PasteAction, PasteState},
     placement::{AirMode, Placement},
@@ -249,8 +250,7 @@ pub fn draw(
             if !was_modal && !had_focus && view.preview.is_none() {
                 let highlight = match view.tool {
                     EditorContext::Inspect => view.inspected,
-                    EditorContext::Paint => aimed.map(selection::Hit::adjacent),
-                    EditorContext::Erase => aimed.map(|hit| hit.position),
+                    EditorContext::Manual => aimed.map(|hit| hit.position),
                     _ => None,
                 };
                 if let Some(target) = highlight {
@@ -262,7 +262,7 @@ pub fn draw(
                         &camera,
                         transform,
                         target,
-                        view.tool == EditorContext::Erase,
+                        view.tool == EditorContext::Manual,
                     );
                 }
             }
@@ -412,24 +412,7 @@ pub fn draw(
                             to_logical(point, scale, window),
                         )
                     }) {
-                        let (target, state) = if action == Action::PaintBlock {
-                            (hit.adjacent(), palette.active().clone())
-                        } else {
-                            (
-                                hit.position,
-                                BlockState {
-                                    name: "minecraft:air".into(),
-                                    properties: Default::default(),
-                                },
-                            )
-                        };
-                        paste::set_blocks(
-                            &mut view,
-                            Volume::between(target, target),
-                            state,
-                            None,
-                            false,
-                        );
+                        manual_edit::apply(&mut view, action, hit, palette.active());
                     }
                 }
                 _ => {
@@ -961,18 +944,7 @@ fn tool_rail(
                         Text::InspectBlock,
                         Some(Action::PinInspection),
                     ),
-                    (
-                        EditorContext::Paint,
-                        Icon::Cube,
-                        Text::PaintBlock,
-                        Some(Action::PaintBlock),
-                    ),
-                    (
-                        EditorContext::Erase,
-                        Icon::Erase,
-                        Text::EraseBlock,
-                        Some(Action::EraseBlock),
-                    ),
+                    (EditorContext::Manual, Icon::Pencil, Text::ManualEdit, None),
                 ] {
                     let selected = mode == active && (has_world || view.demo_scene.is_some());
                     let label = lang.text(label);
@@ -1295,8 +1267,7 @@ fn inspector(
         EditorContext::Explore => None,
         EditorContext::Select => Some(Text::Select),
         EditorContext::Inspect => Some(Text::InspectBlock),
-        EditorContext::Paint => Some(Text::PaintBlock),
-        EditorContext::Erase => Some(Text::EraseBlock),
+        EditorContext::Manual => Some(Text::ManualEdit),
         EditorContext::Place => Some(Text::Placement),
     };
     if let Some(section) = section {
@@ -1372,10 +1343,8 @@ fn inspector(
                         ui.label(egui::RichText::new(lang.text(Text::NoTargetBlock)).color(MUTED));
                     }
                 }
-                EditorContext::Paint | EditorContext::Erase => {
-                    if context == EditorContext::Paint {
-                        material_control(ui, palette, lang, actions);
-                    }
+                EditorContext::Manual => {
+                    material_control(ui, palette, lang, actions);
                     if aimed.is_none() {
                         ui.label(egui::RichText::new(lang.text(Text::NoTargetBlock)).color(MUTED));
                     }
@@ -1839,8 +1808,8 @@ fn help_bar(
     };
     let editor = [
         (Action::PinInspection, Text::InspectBlock),
-        (Action::PaintBlock, Text::PaintBlock),
         (Action::EraseBlock, Text::EraseBlock),
+        (Action::PaintBlock, Text::PaintBlock),
         (Action::MarkCorner, Text::ActionMark),
         (Action::CancelSelection, Text::ActionCancel),
         (Action::Copy, Text::ActionCopy),
@@ -1879,7 +1848,9 @@ fn help_bar(
             hint(binding(Action::CameraRelease), Text::CameraRelease);
         }
     } else {
-        hint(binding(Action::CameraLook), Text::CameraLook);
+        if bindings.available(Action::CameraLook, context) {
+            hint(binding(Action::CameraLook), Text::CameraLook);
+        }
         if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
             hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
         }
