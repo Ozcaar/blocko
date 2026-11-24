@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use bevy::{
     camera::Viewport,
+    input::{ButtonState, keyboard::KeyboardInput},
     prelude::*,
     window::{CursorOptions, RawHandleWrapper, WindowPosition},
 };
@@ -109,12 +110,19 @@ pub fn draw(
     mut palette: ResMut<Palette>,
     mut leave_decisions: MessageWriter<LeaveDecision>,
     mut tab_requests: MessageWriter<TabRequest>,
+    mut keyboard: MessageReader<KeyboardInput>,
     assets: Res<SceneAssets>,
     bindings: Res<Bindings>,
 ) {
     let mut demo_requested = false;
+    let keys: Vec<_> = keyboard.read().collect();
     for (overlay, mut overlay_camera, mut egui, mut input, mut output) in &mut overlays {
         let window_id = overlay.0;
+        let native_keys: Vec<_> = keys
+            .iter()
+            .copied()
+            .filter(|key| key.window == window_id)
+            .collect();
         let Ok((window, mut cursor, mut workspace, handle)) = windows.get_mut(window_id) else {
             continue;
         };
@@ -157,25 +165,31 @@ pub fn draw(
 
         let mut result = WindowActions::default();
         let mut viewport = None;
+        let mut look_buttons = Vec::new();
+        let mut consumes_boost = false;
         let ctx = egui.get_mut();
         let had_focus = input_blocked(ctx);
         let was_modal = workspace.search.is_some()
             || workspace.leave.is_some()
             || menus::window_state(ctx).dialog.is_some();
-        let raw = input.take();
+        let mut raw = input.take();
+        raw.events
+            .retain(|event| !Bindings::is_system_shortcut(event));
+        if flight.captured()
+            && let Some(viewport) = view.viewport
+        {
+            let center = viewport.center() * (window.scale_factor() / ctx.pixels_per_point());
+            center_captured_pointer(&mut raw, egui::pos2(center.x, center.y));
+        }
         let parent = DialogParent::from_window(handle);
         #[cfg(windows)]
-        let raw = {
-            let mut raw = raw;
-            if had_focus
-                && raw.focused
-                && let Some(parent) = &parent
-            {
-                crate::native_clipboard::add_text_events(&mut raw, parent.window.get() as _);
-            }
-            raw
-        };
-        let focused = raw.focused && window.focused;
+        if had_focus
+            && raw.focused
+            && let Some(parent) = &parent
+        {
+            crate::native_clipboard::add_text_events(&mut raw, parent.window.get() as _);
+        }
+        let focused = raw.focused && window.focused && !flight.focus_changed();
         let pass = ctx.run(raw, |ctx| {
             // The camera still uses the preceding frame's viewport while egui lays out this one.
             let ray_point = view.viewport.and_then(|viewport| {
@@ -275,6 +289,7 @@ pub fn draw(
                 || input_blocked(ctx)
                 || was_modal
                 || result.open.is_some()
+                || result.tab.is_some()
                 || result.tool.is_some()
                 || workspace.pending.is_some()
                 || menus::window_state(ctx).dialog.is_some();
@@ -295,27 +310,45 @@ pub fn draw(
             {
                 preview.set_cursor_target(aimed.map(selection::Hit::adjacent));
             }
-            if let Some(action) = ctx.input(|input| {
+            let context = tools_context(view);
+            let viewport_focused = flight.captured()
+                || ctx
+                    .pointer_hover_pos()
+                    .is_some_and(|point| rect.contains(point));
+            if let Some((action, point, shift)) = ctx.input(|input| {
+                look_buttons.clear();
+                look_buttons.extend(input.events.iter().filter_map(|event| {
+                    let (pressed, point) = bindings.camera_look_event(context, event)?;
+                    Some((pressed, rect.contains(point)))
+                }));
                 input.events.iter().find_map(|event| {
-                    let action = bindings.match_enabled(tools_context(view), event, |action| {
-                        action_enabled(action, view, &clipboard, flight.captured())
+                    if Bindings::only_native_repeats(event, &native_keys) {
+                        return None;
+                    }
+                    let action = bindings.match_enabled(context, event, |action| {
+                        (action != Action::ToggleCameraCapture || viewport_focused)
+                            && action_enabled(action, view, &clipboard, flight.captured())
                     })?;
-                    let point = match event {
-                        egui::Event::PointerButton { pos, .. } => {
-                            if flight.captured() {
-                                Some(rect.center())
+                    let (point, shift) = match event {
+                        egui::Event::PointerButton { pos, modifiers, .. } => {
+                            let point = if flight.captured() {
+                                rect.center()
                             } else if rect.contains(*pos) {
-                                Some(*pos)
+                                *pos
                             } else {
                                 return None;
-                            }
+                            };
+                            (Some(point), modifiers.shift)
                         }
-                        _ => None,
+                        egui::Event::Key { modifiers, .. } => (None, modifiers.shift),
+                        _ => return None,
                     };
-                    Some((action, point))
+                    Some((action, point, shift))
                 })
-            }) {
-                result.editor.get_or_insert(action);
+            }) && result.editor.is_none()
+            {
+                result.editor = Some((action, point));
+                consumes_boost = shift;
             }
         });
         #[cfg(windows)]
@@ -328,6 +361,20 @@ pub fn draw(
         **output = Some(pass);
         if workspace.blocks_camera || !focused {
             flight.release(&mut cursor);
+        } else {
+            for (pressed, over_viewport) in look_buttons {
+                if !pressed || result.editor.is_none() {
+                    let state = if pressed {
+                        ButtonState::Pressed
+                    } else {
+                        ButtonState::Released
+                    };
+                    flight.look_button(state, over_viewport, &mut cursor);
+                }
+            }
+        }
+        if consumes_boost {
+            flight.suppress_boost_once();
         }
         if let Some(tool) = result.tool {
             view.tool = tool;
@@ -348,6 +395,7 @@ pub fn draw(
                 Action::ToggleCameraCapture => {
                     if focused {
                         flight.toggle_capture(&mut cursor);
+                        workspace.blocks_camera = false;
                     }
                 }
                 Action::CameraRelease => flight.release(&mut cursor),
@@ -435,6 +483,19 @@ pub fn draw(
             &assets,
         );
     }
+}
+
+fn center_captured_pointer(input: &mut egui::RawInput, center: egui::Pos2) {
+    input.events.retain_mut(|event| match event {
+        egui::Event::PointerMoved(point) | egui::Event::PointerButton { pos: point, .. } => {
+            *point = center;
+            true
+        }
+        egui::Event::PointerGone => false,
+        _ => true,
+    });
+    // The hidden OS cursor may still be over a toolbar when capture begins.
+    input.events.insert(0, egui::Event::PointerMoved(center));
 }
 
 fn draw_reticle(ctx: &egui::Context, viewport: egui::Rect) {
@@ -1744,8 +1805,6 @@ fn binding_label(bindings: &Bindings, action: Action, lang: Language, compact: b
             Control::ExtraMouse2 => Text::KeyMouse5,
             Control::Backspace => Text::KeyBackspace,
             Control::Space => Text::KeySpace,
-            Control::LeftControl => Text::KeyLeftCtrl,
-            Control::RightControl => Text::KeyRightCtrl,
         })
     })
 }
@@ -1810,12 +1869,8 @@ fn help_bar(
             .join(" "),
             Text::CameraMove,
         );
-        hint(
-            [Action::CameraUp, Action::CameraDown]
-                .map(binding)
-                .join(" / "),
-            Text::CameraHeight,
-        );
+        hint(binding(Action::CameraUp), Text::CameraRise);
+        hint(binding(Action::CameraDown), Text::CameraDescend);
         hint(binding(Action::CameraBoost), Text::CameraBoost);
         if action_enabled(Action::ToggleCameraCapture, view, clipboard, captured) {
             hint(binding(Action::ToggleCameraCapture), Text::CameraCapture);
@@ -2187,6 +2242,29 @@ fn stop_marking(selection: &mut Selection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_pointer_buttons_cannot_hit_widgets_under_the_os_cursor() {
+        let center = egui::pos2(300.0, 240.0);
+        let chrome = egui::pos2(19.0, 8.0);
+        let mut input = egui::RawInput {
+            events: vec![
+                egui::Event::PointerGone,
+                egui::Event::PointerButton {
+                    pos: chrome,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::SHIFT,
+                },
+            ],
+            ..Default::default()
+        };
+        center_captured_pointer(&mut input, center);
+        assert!(matches!(input.events.as_slice(), [
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton { pos, modifiers, .. }
+        ] if *point == center && *pos == center && modifiers.shift));
+    }
 
     #[test]
     fn fields_popups_and_preferences_block_viewport_shortcuts() {

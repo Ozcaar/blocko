@@ -1,7 +1,10 @@
-use bevy::prelude::{ButtonInput, KeyCode, MouseButton, Resource};
+use bevy::{
+    input::keyboard::KeyboardInput,
+    prelude::{ButtonInput, KeyCode, MouseButton, Resource},
+};
 use bevy_egui::{
-    egui::{Event, Key, ModifierNames, Modifiers, PointerButton},
-    helpers::bevy_to_egui_physical_key,
+    egui::{Event, Key, ModifierNames, Modifiers, PointerButton, Pos2},
+    helpers::{bevy_to_egui_key, bevy_to_egui_physical_key},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,8 +71,6 @@ pub enum Control {
     ExtraMouse2,
     Backspace,
     Space,
-    LeftControl,
-    RightControl,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,8 +113,6 @@ impl Trigger {
             Self::Click(chord, button) => chord_label(chord, &mouse_name(button, localize)),
             Self::HeldMouse(button) => mouse_name(button, localize),
             Self::HeldKey(key) => match key {
-                KeyCode::ControlLeft => localize(Control::LeftControl).into(),
-                KeyCode::ControlRight => localize(Control::RightControl).into(),
                 KeyCode::ShiftLeft | KeyCode::ShiftRight => "Shift".into(),
                 key => bevy_to_egui_physical_key(&key)
                     .map_or_else(|| format!("{key:?}"), |key| key_name(key, localize).into()),
@@ -244,9 +243,70 @@ impl Bindings {
         labels.join(" / ")
     }
 
-    pub fn camera_mouse(&self, action: Action, button: MouseButton) -> bool {
-        self.triggers(action)
-            .any(|trigger| trigger == Trigger::HeldMouse(button))
+    pub fn camera_look_event(&self, context: EditorContext, event: &Event) -> Option<(bool, Pos2)> {
+        let Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers,
+        } = event
+        else {
+            return None;
+        };
+        (Action::CameraLook.allowed_in(context)
+            && (!pressed || modifiers.is_none())
+            && self
+                .triggers(Action::CameraLook)
+                .any(|trigger| trigger == Trigger::HeldMouse(bevy_mouse(*button))))
+        .then_some((*pressed, *pos))
+    }
+
+    pub fn is_system_shortcut(event: &Event) -> bool {
+        matches!(event, Event::Key { key: Key::Tab, modifiers, .. } if modifiers.alt)
+    }
+
+    // egui derives repetitions from its own previous frame, which is cleared on blur.
+    pub fn only_native_repeats(event: &Event, keys: &[&KeyboardInput]) -> bool {
+        let Event::Key {
+            key,
+            physical_key,
+            pressed: true,
+            ..
+        } = event
+        else {
+            return false;
+        };
+        let mut repeated = false;
+        for native in keys.iter().filter(|native| native.state.is_pressed()) {
+            let matches = if let Some(physical) = physical_key {
+                bevy_to_egui_physical_key(&native.key_code) == Some(*physical)
+            } else {
+                bevy_to_egui_key(&native.logical_key) == Some(*key)
+            };
+            if matches {
+                if !native.repeat {
+                    return false;
+                }
+                repeated = true;
+            }
+        }
+        repeated
+    }
+
+    pub fn is_camera_modifier(key: KeyCode) -> bool {
+        matches!(
+            key,
+            KeyCode::ControlLeft
+                | KeyCode::ControlRight
+                | KeyCode::AltLeft
+                | KeyCode::AltRight
+                | KeyCode::SuperLeft
+                | KeyCode::SuperRight
+        )
+    }
+
+    pub fn camera_motion_blocked(&self, keys: &ButtonInput<KeyCode>) -> bool {
+        keys.get_pressed().copied().any(Self::is_camera_modifier)
     }
 
     pub fn camera_key_pressed(&self, action: Action, keys: &ButtonInput<KeyCode>) -> bool {
@@ -276,6 +336,52 @@ mod tests {
             pressed,
             modifiers,
         }
+    }
+
+    #[test]
+    fn camera_descends_with_q_and_system_navigation_is_separate() {
+        let bindings = Bindings::default();
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::ControlRight);
+        assert!(bindings.camera_motion_blocked(&keys));
+        assert!(!bindings.camera_key_pressed(Action::CameraDown, &keys));
+        keys.release(KeyCode::ControlRight);
+        keys.press(KeyCode::KeyQ);
+        assert!(!bindings.camera_motion_blocked(&keys));
+        assert!(bindings.camera_key_pressed(Action::CameraDown, &keys));
+        assert_eq!(bindings.label(Action::CameraDown, |_| ""), "Q");
+        assert!(Bindings::is_system_shortcut(&key(
+            Key::Tab,
+            Modifiers::ALT,
+            false
+        )));
+        assert!(!Bindings::is_system_shortcut(&key(
+            Key::Tab,
+            Modifiers::NONE,
+            false
+        )));
+    }
+
+    #[test]
+    fn a_repeat_after_focus_change_cannot_start_capture() {
+        let native = KeyboardInput {
+            key_code: KeyCode::KeyF,
+            logical_key: bevy::input::keyboard::Key::Character("f".into()),
+            state: bevy::input::ButtonState::Pressed,
+            text: None,
+            repeat: true,
+            window: bevy::prelude::Entity::PLACEHOLDER,
+        };
+        let mut event = key(Key::F, Modifiers::NONE, false);
+        if let Event::Key { physical_key, .. } = &mut event {
+            *physical_key = Some(Key::F);
+        }
+        assert!(Bindings::only_native_repeats(&event, &[&native]));
+        let fresh = KeyboardInput {
+            repeat: false,
+            ..native.clone()
+        };
+        assert!(!Bindings::only_native_repeats(&event, &[&native, &fresh]));
     }
 
     #[test]

@@ -138,7 +138,8 @@ catalog! {
     PreviewDestination => "Vista previa · {0}", "Preview · {0}";
     CameraLook => "Mirar", "Look";
     CameraMove => "Mover", "Move";
-    CameraHeight => "Subir / bajar", "Rise / descend";
+    CameraRise => "Subir", "Rise";
+    CameraDescend => "Bajar", "Descend";
     CameraBoost => "Acelerar", "Boost";
     CameraRelease => "Soltar cámara", "Release camera";
     CameraCapture => "Cámara persistente", "Persistent camera";
@@ -157,8 +158,6 @@ catalog! {
     KeyMouse5 => "Botón 5", "Mouse 5";
     KeyBackspace => "Retroceso", "Backspace";
     KeySpace => "Espacio", "Space";
-    KeyLeftCtrl => "Ctrl izq.", "Left Ctrl";
-    KeyRightCtrl => "Ctrl der.", "Right Ctrl";
     Demo => "Prueba de ventanas", "Window demo";
     DemoWindow => "Otra ventana de prueba", "Another demo window";
     DemoCopy => "Compartir selección ficticia", "Share demo selection";
