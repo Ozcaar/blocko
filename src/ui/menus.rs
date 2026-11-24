@@ -9,11 +9,8 @@ use crate::{
 };
 
 use super::{
-    WindowActions, action_enabled,
-    appearance::{self, ACCENT, BAR, Icon, TOOLBAR},
-    binding_label,
-    dialogs::Dialog,
-    frame, tools_context,
+    WindowActions, action_enabled, appearance::BAR, binding_label, dialogs::Dialog, frame,
+    tools_context,
 };
 
 #[derive(Clone, Copy)]
@@ -63,12 +60,6 @@ pub(super) fn bar(
         .frame(frame(BAR).inner_margin(egui::Margin::symmetric(10, 4)))
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
-                let (logo, _) =
-                    ui.allocate_exact_size(egui::vec2(25.0, 25.0), egui::Sense::hover());
-                ui.painter().rect_filled(logo, 4, TOOLBAR);
-                Icon::Cube.paint(ui.painter(), logo.shrink(4.0), ACCENT);
-                appearance::headline(ui, "Blocko", 16.0);
-                ui.separator();
                 egui::MenuBar::new()
                     .style(|style: &mut egui::Style| {
                         egui::containers::menu::menu_style(style);

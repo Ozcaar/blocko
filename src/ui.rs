@@ -438,14 +438,27 @@ pub fn draw(
 }
 
 fn draw_reticle(ctx: &egui::Context, viewport: egui::Rect) {
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Middle,
-        egui::Id::new("camera reticle"),
-    ));
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("camera reticle"),
+        ))
+        .with_clip_rect(viewport);
+    let scale = ctx.pixels_per_point();
+    let snap = |points: f32| (points * scale).round() / scale;
     let center = viewport.center();
-    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(175));
-    for axis in [egui::vec2(5.0, 0.0), egui::vec2(0.0, 5.0)] {
-        painter.line_segment([center - axis, center + axis], stroke);
+    let center = egui::pos2(snap(center.x), snap(center.y));
+    let radius = snap(13.0);
+    let gap = snap(3.0);
+    let half_width = snap(1.0).max(scale.recip());
+    let color = egui::Color32::from_white_alpha(190);
+
+    for (x, y) in [(1.0_f32, 0.0_f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+        let axis = egui::vec2(x, y);
+        let width = egui::vec2(y.abs(), x.abs()) * half_width;
+        let arm =
+            egui::Rect::from_two_pos(center + axis * gap - width, center + axis * radius + width);
+        painter.rect_filled(arm, 0, color);
     }
 }
 
@@ -808,52 +821,55 @@ fn empty_workspace(
     lang: Language,
     actions: &mut WindowActions,
 ) {
-    egui::CentralPanel::default()
+    let available = egui::CentralPanel::default()
         .frame(frame(FIELD).inner_margin(egui::Margin::same(20)))
+        .show(ctx, |ui| ui.max_rect())
+        .inner;
+    let width = available.width().min(396.0);
+    let inset = 23.0;
+    egui::Area::new(egui::Id::new("welcome card"))
+        .pivot(egui::Align2::CENTER_CENTER)
+        .fixed_pos(available.center())
+        .constrain_to(available)
+        .default_width(width)
+        .fade_in(false)
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(((ui.available_height() - 338.0) * 0.43).max(8.0));
-                    let width = ui.available_width().min(396.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(width, 0.0),
-                        egui::Layout::top_down(egui::Align::Center),
-                        |ui| {
-                            appearance::card()
-                                .fill(PANEL)
-                                .inner_margin(egui::Margin::same(23))
-                                .show(ui, |ui| {
-                                    ui.set_width(width - 48.0);
-                                    appearance::empty_illustration(ui);
-                                    ui.add_space(9.0);
-                                    appearance::headline(ui, lang.text(Text::EmptyTitle), 24.0);
-                                    ui.label(
-                                        egui::RichText::new(lang.text(Text::EmptyHelp))
-                                            .color(MUTED),
-                                    );
-                                    ui.add_space(9.0);
-                                    let label = lang.text(Text::OpenWorld);
-                                    if appearance::button(
-                                        ui,
-                                        Some(Icon::Folder),
-                                        label,
-                                        label,
-                                        ButtonStyle::Primary,
-                                        !busy,
-                                    )
-                                    .clicked()
-                                    {
-                                        actions.open = Some(Destination::Tab);
-                                    }
-                                    if workspace.notice.is_some() {
-                                        ui.add_space(7.0);
-                                        opening_notice(ui, workspace, lang);
-                                    }
-                                });
-                        },
-                    );
+            appearance::card()
+                .fill(PANEL)
+                .inner_margin(egui::Margin::same(inset as i8))
+                .show(ui, |ui| {
+                    ui.set_width(width - 2.0 * inset);
+                    egui::ScrollArea::vertical()
+                        .max_height(available.height() - 2.0 * inset)
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                appearance::empty_illustration(ui);
+                                ui.add_space(9.0);
+                                appearance::headline(ui, lang.text(Text::EmptyTitle), 24.0);
+                                ui.label(
+                                    egui::RichText::new(lang.text(Text::EmptyHelp)).color(MUTED),
+                                );
+                                ui.add_space(9.0);
+                                let label = lang.text(Text::OpenWorld);
+                                if appearance::button(
+                                    ui,
+                                    Some(Icon::Folder),
+                                    label,
+                                    label,
+                                    ButtonStyle::Primary,
+                                    !busy,
+                                )
+                                .clicked()
+                                {
+                                    actions.open = Some(Destination::Tab);
+                                }
+                                if workspace.notice.is_some() {
+                                    ui.add_space(7.0);
+                                    opening_notice(ui, workspace, lang);
+                                }
+                            });
+                        });
                 });
-            });
         });
 }
 
@@ -1062,12 +1078,13 @@ fn tab_bar(
             bottom: 0,
         }))
         .show(ctx, |ui| {
+            let tab_width = (ui.available_width() * 0.28).clamp(176.0, 240.0);
             horizontal_strip(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for (tab, name, path) in tabs {
                     ui.push_id(*tab, |ui| {
                         let active = *tab == workspace.active;
-                        let (label, close) = world_tab(ui, name, active, busy, lang);
+                        let (label, close) = world_tab(ui, name, tab_width, active, busy, lang);
                         let label = label.on_hover_ui(|ui| {
                             appearance::headline(ui, name, 14.0);
                             ui.label(lang.text(Text::DragTab));
@@ -1136,6 +1153,7 @@ fn tab_bar(
 fn world_tab(
     ui: &mut egui::Ui,
     name: &str,
+    width: f32,
     active: bool,
     busy: bool,
     lang: Language,
@@ -1144,12 +1162,12 @@ fn world_tab(
         name.to_owned(),
         appearance::strong(13.0),
         egui::Color32::PLACEHOLDER,
-        145.0,
+        width - 67.0,
     );
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let text = ui.painter().layout_job(job);
-    let (id, rect) = ui.allocate_space(egui::vec2((text.size().x + 67.0).max(110.0), 32.0));
+    let (id, rect) = ui.allocate_space(egui::vec2(width, 32.0));
     let close_rect = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 15.0, rect.center().y),
         egui::vec2(23.0, 23.0),
@@ -1583,12 +1601,14 @@ fn status_bar(
 ) {
     let busy = workspace.pending.is_some() || view.paste.writes();
     let scene = view.stream.is_some() || view.demo_scene.is_some();
-    let compact = ctx.content_rect().width() < 640.0;
-    command_strip(ctx, |ui| {
-        if scene && !busy && !input_blocked(ctx) {
-            help_bar(ui, view, captured, clipboard, lang, bindings, compact);
-        }
-    });
+    if scene {
+        let compact = ctx.content_rect().width() < 640.0;
+        command_strip(ctx, |ui| {
+            if !busy && !input_blocked(ctx) {
+                help_bar(ui, view, captured, clipboard, lang, bindings, compact);
+            }
+        });
+    }
     egui::TopBottomPanel::bottom("status")
         .exact_height(26.0)
         .frame(frame(BAR).inner_margin(egui::Margin::symmetric(11, 3)))
