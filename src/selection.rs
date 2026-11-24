@@ -21,10 +21,36 @@ impl Selection {
         let [a, b] = self.corners;
         Some(Volume::between(a?, b?))
     }
+
+    pub fn next_corner(&self) -> Option<usize> {
+        self.picking
+            .or_else(|| self.corners.iter().position(Option::is_none))
+    }
+
+    pub fn can_mark(&self) -> bool {
+        self.next_corner().is_some()
+    }
+
+    pub fn unmark_last(&mut self) {
+        if let Some(corner) = self.corners.iter_mut().rfind(|corner| corner.is_some()) {
+            *corner = None;
+        }
+        self.cancel_marking();
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn cancel_marking(&mut self) {
+        self.picking = None;
+        self.pick_b_after_a = false;
+        self.missed = false;
+    }
 }
 
 pub fn mark_corner(selection: &mut Selection, block: Option<[i32; 3]>) {
-    let Some(corner) = selection.picking else {
+    let Some(corner) = selection.next_corner() else {
         return;
     };
     let Some(block) = block else {
@@ -32,9 +58,9 @@ pub fn mark_corner(selection: &mut Selection, block: Option<[i32; 3]>) {
         return;
     };
     selection.corners[corner] = Some(block);
-    selection.picking = (corner == 0 && selection.pick_b_after_a).then_some(1);
-    selection.pick_b_after_a = false;
-    selection.missed = false;
+    let mark_b = selection.picking == Some(0) && selection.pick_b_after_a;
+    selection.cancel_marking();
+    selection.picking = mark_b.then_some(1);
 }
 
 pub fn cursor_hit(
@@ -270,6 +296,100 @@ pub(crate) fn box_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_a_then_b_and_ignores_extra_clicks() {
+        let mut selection = Selection::default();
+        let a = [12, 70, -23];
+        let b = [13, 72, -23];
+
+        assert!(selection.can_mark());
+        mark_corner(&mut selection, Some(a));
+        assert_eq!(selection.corners, [Some(a), None]);
+        assert!(selection.can_mark());
+        mark_corner(&mut selection, Some(b));
+        assert_eq!(selection.volume().unwrap().dimensions(), [2, 3, 1]);
+        assert!(!selection.can_mark());
+
+        mark_corner(&mut selection, Some([0; 3]));
+        mark_corner(&mut selection, None);
+        assert_eq!(selection.corners, [Some(a), Some(b)]);
+        assert!(!selection.missed);
+    }
+
+    #[test]
+    fn missed_click_leaves_the_same_corner_available() {
+        let mut selection = Selection::default();
+        mark_corner(&mut selection, None);
+        assert!(selection.missed);
+        assert_eq!(selection.corners, [None, None]);
+        assert!(selection.can_mark());
+
+        mark_corner(&mut selection, Some([8, 50, 5]));
+        assert!(!selection.missed);
+        mark_corner(&mut selection, None);
+        assert_eq!(selection.corners, [Some([8, 50, 5]), None]);
+
+        mark_corner(&mut selection, Some([10, 54, 8]));
+        assert!(!selection.missed);
+        assert!(!selection.can_mark());
+    }
+
+    #[test]
+    fn inspector_can_remark_a_corner_or_both_in_order() {
+        let a = [3, 40, 5];
+        let b = [8, 45, 9];
+        let mut selection = Selection {
+            corners: [Some(a), Some(b)],
+            picking: Some(1),
+            ..default()
+        };
+
+        assert!(selection.can_mark());
+        mark_corner(&mut selection, None);
+        assert_eq!(selection.picking, Some(1));
+        let new_b = [9, 45, 9];
+        mark_corner(&mut selection, Some(new_b));
+        assert_eq!(selection.corners, [Some(a), Some(new_b)]);
+        assert!(!selection.can_mark());
+
+        selection.picking = Some(0);
+        selection.pick_b_after_a = true;
+        let new_a = [4, 40, 5];
+        mark_corner(&mut selection, Some(new_a));
+        assert_eq!(selection.picking, Some(1));
+        mark_corner(&mut selection, Some(b));
+        assert_eq!(selection.corners, [Some(new_a), Some(b)]);
+        assert!(!selection.can_mark());
+    }
+
+    #[test]
+    fn unmark_last_and_clear_reset_pending_marks() {
+        let a = [8, 50, 5];
+        let b = [9, 50, 5];
+        let mut selection = Selection {
+            corners: [Some(a), Some(b)],
+            picking: Some(0),
+            pick_b_after_a: true,
+            missed: true,
+        };
+
+        selection.unmark_last();
+        assert_eq!(selection.corners, [Some(a), None]);
+        assert!(selection.picking.is_none());
+        assert!(!selection.pick_b_after_a && !selection.missed);
+        selection.unmark_last();
+        assert_eq!(selection.corners, [None, None]);
+
+        selection.corners = [Some(a), Some(b)];
+        selection.picking = Some(0);
+        selection.pick_b_after_a = true;
+        selection.missed = true;
+        selection.clear();
+        assert_eq!(selection.corners, [None, None]);
+        assert!(selection.picking.is_none());
+        assert!(!selection.pick_b_after_a && !selection.missed);
+    }
 
     #[test]
     fn ray_picks_nearest_block_across_negative_chunk_border() {

@@ -152,6 +152,8 @@ fn controls(ui: &mut Ui, lang: Language, bindings: &Bindings) {
             (Text::PaintBlock, &[PaintBlock]),
             (Text::EraseBlock, &[EraseBlock]),
             (ActionMark, &[MarkCorner]),
+            (Text::UnmarkCorner, &[UnmarkCorner]),
+            (Text::ClearSelection, &[ClearSelection]),
             (CancelMark, &[CancelSelection]),
             (CopySelection, &[Copy]),
             (PasteStructure, &[StartPaste]),

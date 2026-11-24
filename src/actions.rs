@@ -23,6 +23,8 @@ pub enum Action {
     RepeatPlace,
     CancelPaste,
     MarkCorner,
+    UnmarkCorner,
+    ClearSelection,
     CancelSelection,
     CameraLook,
     CameraForward,
@@ -50,10 +52,12 @@ impl Action {
         match self {
             Copy | StartPaste => context != EditorContext::Place,
             Place | RepeatPlace | CancelPaste => context == EditorContext::Place,
-            MarkCorner | CancelSelection => context == EditorContext::Select,
+            MarkCorner | UnmarkCorner | ClearSelection | CancelSelection => {
+                context == EditorContext::Select
+            }
             PinInspection => context == EditorContext::Inspect,
             PaintBlock | EraseBlock => context == EditorContext::Manual,
-            CameraLook => context != EditorContext::Manual,
+            CameraLook => !matches!(context, EditorContext::Manual | EditorContext::Select),
             Save | Undo | Redo | OpenPalette | ToggleCameraCapture => true,
             CameraForward | CameraBackward | CameraLeft | CameraRight | CameraUp | CameraDown
             | CameraBoost | CameraRelease => true,
@@ -188,6 +192,8 @@ impl Default for Bindings {
             (CancelPaste, Trigger::Key(plain, Key::Escape)),
             (CancelPaste, Trigger::Key(plain, Key::Backspace)),
             (MarkCorner, Click(plain, MouseButton::Left)),
+            (UnmarkCorner, Click(plain, MouseButton::Right)),
+            (ClearSelection, Click(shift, MouseButton::Right)),
             (CancelSelection, Trigger::Key(plain, Key::Escape)),
             (CameraLook, HeldMouse(MouseButton::Right)),
             (CameraForward, HeldKey(KeyCode::KeyW)),
@@ -435,6 +441,35 @@ mod tests {
             bindings.camera_look_event(EditorContext::Explore, &right),
             Some((true, Pos2::ZERO))
         );
+    }
+
+    #[test]
+    fn right_click_and_shift_right_click_only_change_selection_when_selecting() {
+        let bindings = Bindings::default();
+        let right = |modifiers, pressed| Event::PointerButton {
+            pos: Pos2::ZERO,
+            pressed,
+            button: PointerButton::Secondary,
+            modifiers,
+        };
+        let plain = right(Modifiers::NONE, true);
+        let shifted = right(Modifiers::SHIFT, true);
+        let select = EditorContext::Select;
+        assert_eq!(
+            bindings.match_event(select, &plain),
+            Some(Action::UnmarkCorner)
+        );
+        assert_eq!(
+            bindings.match_event(select, &shifted),
+            Some(Action::ClearSelection)
+        );
+        assert_eq!(
+            bindings.match_event(select, &right(Modifiers::SHIFT, false)),
+            None
+        );
+        assert_eq!(bindings.camera_look_event(select, &plain), None);
+        assert_eq!(bindings.camera_look_event(select, &shifted), None);
+        assert_eq!(bindings.match_event(EditorContext::Manual, &shifted), None);
     }
 
     #[test]

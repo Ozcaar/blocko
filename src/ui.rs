@@ -380,7 +380,7 @@ pub fn draw(
             view.tool = tool;
             view.inspection_pinned = false;
             view.inspected = None;
-            stop_marking(&mut view.selection);
+            view.selection.cancel_marking();
             if view.preview.take().is_some() {
                 paste::apply_action(&mut view, PasteAction::Discard);
             }
@@ -999,7 +999,7 @@ fn selection_actions(ui: &mut egui::Ui, selection: &mut Selection, lang: Languag
             )
             .clicked()
             {
-                stop_marking(selection);
+                selection.cancel_marking();
             }
         } else if appearance::button(
             ui,
@@ -1011,7 +1011,7 @@ fn selection_actions(ui: &mut egui::Ui, selection: &mut Selection, lang: Languag
         )
         .clicked()
         {
-            *selection = Selection::default();
+            selection.clear();
         }
     });
 }
@@ -1512,7 +1512,14 @@ fn action_enabled(action: Action, view: &View, clipboard: &Clipboard, captured: 
             .preview
             .as_ref()
             .is_some_and(|preview| preview.target_valid || preview.moving),
-        Action::MarkCorner | Action::CancelSelection => view.selection.picking.is_some(),
+        Action::MarkCorner => view.selection.can_mark(),
+        Action::UnmarkCorner => view.selection.corners.iter().any(Option::is_some),
+        Action::ClearSelection => {
+            view.selection.corners.iter().any(Option::is_some)
+                || view.selection.picking.is_some()
+                || view.selection.missed
+        }
+        Action::CancelSelection => view.selection.picking.is_some(),
         _ => false,
     }
 }
@@ -1580,7 +1587,7 @@ pub(crate) fn execute_action(
                 view.preview = Some(preview);
                 view.paste = PasteState::Idle;
                 view.preview_cancelled = false;
-                stop_marking(&mut view.selection);
+                view.selection.cancel_marking();
             }
         }
         Action::CancelPaste => {
@@ -1614,7 +1621,9 @@ pub(crate) fn execute_action(
         Action::MarkCorner => {
             selection::mark_corner(&mut view.selection, hit.map(|hit| hit.position))
         }
-        Action::CancelSelection => stop_marking(&mut view.selection),
+        Action::UnmarkCorner => view.selection.unmark_last(),
+        Action::ClearSelection => view.selection.clear(),
+        Action::CancelSelection => view.selection.cancel_marking(),
         _ => {}
     }
 }
@@ -1811,6 +1820,8 @@ fn help_bar(
         (Action::EraseBlock, Text::EraseBlock),
         (Action::PaintBlock, Text::PaintBlock),
         (Action::MarkCorner, Text::ActionMark),
+        (Action::UnmarkCorner, Text::UnmarkCorner),
+        (Action::ClearSelection, Text::ClearSelection),
         (Action::CancelSelection, Text::ActionCancel),
         (Action::Copy, Text::ActionCopy),
         (Action::StartPaste, Text::ActionPaste),
@@ -2061,7 +2072,7 @@ fn preview_controls(
 }
 
 fn selection_details(ui: &mut egui::Ui, selection: &mut Selection, position: Vec3, lang: Language) {
-    if let Some(corner) = selection.picking {
+    if let Some(corner) = selection.next_corner() {
         ui.label(
             egui::RichText::new(lang.format(Text::PickCorner, &[&corner_name(corner)]))
                 .color(ACCENT),
@@ -2130,7 +2141,7 @@ fn corner_controls(
     });
     if let Some(coords) = &mut selection.corners[corner] {
         if edit_coordinates(ui, coords, COORDINATE_LIMITS).0 {
-            stop_marking(selection);
+            selection.cancel_marking();
         }
     } else if ui.button(lang.text(Text::EditCoordinates)).clicked() {
         let near_camera = position.floor().as_ivec3().to_array();
@@ -2140,7 +2151,7 @@ fn corner_controls(
                 near_camera[axis].clamp(min, max)
             })
         }));
-        stop_marking(selection);
+        selection.cancel_marking();
     }
 }
 
@@ -2201,12 +2212,6 @@ fn corner_name(corner: usize) -> &'static str {
 fn arm_pick(selection: &mut Selection, corner: usize, then_b: bool) {
     selection.picking = Some(corner);
     selection.pick_b_after_a = then_b;
-    selection.missed = false;
-}
-
-fn stop_marking(selection: &mut Selection) {
-    selection.picking = None;
-    selection.pick_b_after_a = false;
     selection.missed = false;
 }
 

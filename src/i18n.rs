@@ -101,6 +101,7 @@ catalog! {
     PickCorner => "Marca la esquina {0} en un bloque del visor.", "Mark corner {0} on a block in the viewport.";
     CancelMark => "Cancelar marca", "Cancel marking";
     PickMiss => "Acerca la cámara y elige un bloque visible.", "Move closer and choose a visible block.";
+    UnmarkCorner => "Desmarcar esquina", "Unmark corner";
     ClearSelection => "Limpiar selección", "Clear selection";
     Dimensions => "{0} × {1} × {2} bloques", "{0} × {1} × {2} blocks";
     Corner => "Esquina {0}", "Corner {0}";
