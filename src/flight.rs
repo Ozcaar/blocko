@@ -70,6 +70,12 @@ impl Flight {
         }
     }
 
+    pub fn change_tool(&mut self, cursor: &mut CursorOptions) {
+        if self.capture == Capture::Held {
+            self.release(cursor);
+        }
+    }
+
     pub fn release(&mut self, cursor: &mut CursorOptions) {
         self.capture = Capture::Free;
         self.just_captured = false;
@@ -268,6 +274,34 @@ mod tests {
         assert!(!cursor.visible);
 
         flight.toggle_capture(&mut cursor);
+        assert!(!flight.captured());
+        assert_eq!(cursor.grab_mode, CursorGrabMode::None);
+        assert!(cursor.visible);
+    }
+
+    #[test]
+    fn changing_tool_preserves_persistent_navigation_and_releases_temporary_capture() {
+        let mut flight = Flight::new(0.7, -0.2);
+        let mut cursor = CursorOptions::default();
+        let rotation = flight.rotation();
+        flight.toggle_capture(&mut cursor);
+        flight.keys.press(KeyCode::KeyW);
+        flight.velocity = Vec3::Z;
+
+        flight.change_tool(&mut cursor);
+        assert!(flight.persistent());
+        assert_eq!(cursor.grab_mode, CursorGrabMode::Locked);
+        assert!(!cursor.visible);
+        assert_eq!(flight.rotation(), rotation);
+        assert!(flight.keys.pressed(KeyCode::KeyW));
+        assert_eq!(flight.velocity, Vec3::Z);
+
+        flight.release(&mut cursor);
+        flight.change_tool(&mut cursor);
+        assert!(!flight.captured());
+
+        flight.look_button(ButtonState::Pressed, true, &mut cursor);
+        flight.change_tool(&mut cursor);
         assert!(!flight.captured());
         assert_eq!(cursor.grab_mode, CursorGrabMode::None);
         assert!(cursor.visible);

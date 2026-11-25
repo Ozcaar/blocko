@@ -273,10 +273,6 @@ pub fn draw(
                     );
                 }
             }
-            if flight.captured() && !was_modal {
-                draw_reticle(ctx, rect);
-            }
-
             result.merge(actions);
             if let Some((document, name, saving, error)) = &leaving {
                 if let Some(choice) = confirm_leave(ctx, *language, name, *saving, error.as_deref())
@@ -358,6 +354,20 @@ pub fn draw(
                 result.editor = Some((action, point));
                 consumes_boost = shift;
             }
+            let releasing = result.editor.is_some_and(|(action, _)| match action {
+                Action::CameraRelease | Action::OpenPalette | Action::Save | Action::StartPaste => {
+                    true
+                }
+                Action::ToggleCameraCapture => flight.persistent(),
+                action if action.tool().is_some() => !flight.persistent(),
+                _ => false,
+            });
+            if flight.captured()
+                && !releasing
+                && (flight.persistent() || look_buttons.iter().all(|(pressed, _)| *pressed))
+            {
+                draw_reticle(ctx, rect);
+            }
         });
         #[cfg(windows)]
         if let Some(parent) = &parent {
@@ -391,7 +401,7 @@ pub fn draw(
                 | Action::UseInspect
                 | Action::UseManual => {
                     if focused && let Some(tool) = action.tool() {
-                        flight.release(&mut cursor);
+                        flight.change_tool(&mut cursor);
                         view.tool = tool;
                         view.inspection_pinned = false;
                         view.inspected = None;
