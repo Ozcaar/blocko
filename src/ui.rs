@@ -31,6 +31,7 @@ use crate::{
     world::{BlockState, ChunkPos},
 };
 
+mod active_material;
 mod appearance;
 mod block_inspector;
 mod dialogs;
@@ -287,6 +288,7 @@ pub fn draw(
                 && !search.show(ctx, *language, &mut palette)
             {
                 workspace.search = None;
+                ctx.request_repaint();
             }
             workspace.blocks_camera = had_focus
                 || input_blocked(ctx)
@@ -816,7 +818,7 @@ fn window_ui(
         tab_bar(ctx, window, workspace, tabs, busy, lang, &mut actions);
     }
     status_bar(
-        ctx, workspace, view, position, captured, clipboard, lang, bindings,
+        ctx, workspace, view, position, captured, clipboard, palette, lang, bindings,
     );
     if chrome.activity_bar {
         tool_rail(ctx, view, busy, lang, bindings, &mut actions);
@@ -1653,6 +1655,7 @@ fn status_bar(
     position: Vec3,
     captured: bool,
     clipboard: &Clipboard,
+    palette: &Palette,
     lang: Language,
     bindings: &Bindings,
 ) {
@@ -1672,57 +1675,76 @@ fn status_bar(
         .show(ctx, |ui| {
             let notice = status_notice(workspace, view, lang);
             if scene || notice.is_some() {
-                ui.horizontal(|ui| {
-                    if scene {
-                        ui.monospace(lang.format(
-                            Text::Coordinates,
-                            &[
-                                &format_args!("{:.1}", position.x),
-                                &format_args!("{:.1}", position.y),
-                                &format_args!("{:.1}", position.z),
-                            ],
-                        ));
-                    }
-                    if let Some(stream) = &view.stream {
-                        let (visible, absent, failed, loading) = stream.status();
-                        ui.separator();
-                        let terrain = if loading {
-                            lang.text(Text::LoadingTerrain).into()
-                        } else if visible == 0 && absent > 0 {
-                            lang.text(Text::EmptyTerrain).into()
-                        } else {
-                            lang.format(Text::VisibleChunks, &[&visible])
-                        };
-                        ui.label(egui::RichText::new(terrain).color(MUTED));
-                        if let Some(error) = stream.first_error() {
-                            ui.label(
-                                egui::RichText::new(lang.format(Text::FailedChunks, &[&failed]))
-                                    .color(ALERT),
-                            )
-                            .on_hover_text(Diagnostic::from_detail(error).message(lang));
-                        }
-                    }
-                    if view.edits.dirty() {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(
-                                lang.format(Text::SavePending, &[&view.edits.pending_count()]),
-                            )
-                            .color(ALERT),
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if view.stream.is_some() {
+                        let width = (ui.available_width() * 0.23).clamp(100.0, 160.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(width, ui.available_height()),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| active_material::show(ui, Some(palette.active()), lang),
                         );
+                        ui.separator();
                     }
-                    if let Some((status, color, spinner)) = notice {
-                        if scene {
-                            ui.separator();
-                        }
-                        if spinner {
-                            ui.spinner();
-                        }
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&status).color(color)).truncate(),
-                        )
-                        .on_hover_text(status);
-                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        horizontal_strip(ui, |ui| {
+                            if scene {
+                                ui.monospace(lang.format(
+                                    Text::Coordinates,
+                                    &[
+                                        &format_args!("{:.1}", position.x),
+                                        &format_args!("{:.1}", position.y),
+                                        &format_args!("{:.1}", position.z),
+                                    ],
+                                ));
+                            }
+                            if let Some(stream) = &view.stream {
+                                let (visible, absent, failed, loading) = stream.status();
+                                ui.separator();
+                                let terrain = if loading {
+                                    lang.text(Text::LoadingTerrain).into()
+                                } else if visible == 0 && absent > 0 {
+                                    lang.text(Text::EmptyTerrain).into()
+                                } else {
+                                    lang.format(Text::VisibleChunks, &[&visible])
+                                };
+                                ui.label(egui::RichText::new(terrain).color(MUTED));
+                                if let Some(error) = stream.first_error() {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            lang.format(Text::FailedChunks, &[&failed]),
+                                        )
+                                        .color(ALERT),
+                                    )
+                                    .on_hover_text(Diagnostic::from_detail(error).message(lang));
+                                }
+                            }
+                            if view.edits.dirty() {
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new(
+                                        lang.format(
+                                            Text::SavePending,
+                                            &[&view.edits.pending_count()],
+                                        ),
+                                    )
+                                    .color(ALERT),
+                                );
+                            }
+                            if let Some((status, color, spinner)) = notice {
+                                if scene {
+                                    ui.separator();
+                                }
+                                if spinner {
+                                    ui.spinner();
+                                }
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&status).color(color))
+                                        .truncate(),
+                                )
+                                .on_hover_text(status);
+                            }
+                        });
+                    });
                 });
             }
         });
